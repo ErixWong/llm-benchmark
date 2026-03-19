@@ -1,0 +1,38 @@
+{
+  "name": "llm-api-benchmark",
+  "version": "1.0.0",
+  "description": "API端点并发能力与Token生成速度测试工具",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:concurrency": "node tests/concurrency.test.js",
+    "test:token-speed": "node tests/token-speed.test.js",
+    "test:all": "npm run test:concurrency && npm run test:token-speed",
+    "benchmark": "node src/benchmark.js"
+  },
+  "keywords": [
+    "api",
+    "benchmark",
+    "concurrency",
+    "token",
+    "llm",
+    "performance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "agentkeepalive": "^4.6.0",
+    "axios": "^1.6.0",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "dotenv": "^16.3.1",
+    "gpt-tokenizer": "^2.9.0",
+    "ora": "^7.0.1"
+  },
+  "devDependencies": {
+    "artillery": "^1.7.9",
+    "autocannon": "^7.12.0",
+    "clinic": "^13.0.0"
+  }
+}

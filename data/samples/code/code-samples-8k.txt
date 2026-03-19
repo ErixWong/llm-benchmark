@@ -1,0 +1,1015 @@
+# 代码示例集
+
+## 一、JavaScript/TypeScript 示例
+
+### 1.1 异步并发控制
+
+```typescript
+/**
+ * 并发控制器 - 限制异步任务的并发数量
+ */
+class ConcurrencyController {
+  private running: number = 0;
+  private queue: Array<() => Promise<void>> = [];
+
+  constructor(private maxConcurrency: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const execute = async () => {
+        this.running++;
+        try {
+          const result = await task();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        } finally {
+          this.running--;
+          this.next();
+        }
+      };
+
+      if (this.running < this.maxConcurrency) {
+        execute();
+      } else {
+        this.queue.push(execute);
+      }
+    });
+  }
+
+  private next() {
+    if (this.queue.length > 0 && this.running < this.maxConcurrency) {
+      const task = this.queue.shift();
+      task?.();
+    }
+  }
+}
+
+// 使用示例
+async function fetchUrls(urls: string[], maxConcurrency: number = 5) {
+  const controller = new ConcurrencyController(maxConcurrency);
+  const results = await Promise.all(
+    urls.map(url => controller.run(() => fetch(url).then(r => r.json())))
+  );
+  return results;
+}
+```
+
+### 1.2 事件发射器
+
+```typescript
+type EventHandler<T = any> = (data: T) => void | Promise<void>;
+
+/**
+ * 类型安全的事件发射器
+ */
+class EventEmitter<EventMap extends Record<string, any>> {
+  private handlers: Map<keyof EventMap, Set<EventHandler<any>>> = new Map();
+
+  on<K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>) {
+    if (!this.handlers.has(event)) {
+      this.handlers.set(event, new Set());
+    }
+    this.handlers.get(event)!.add(handler);
+    
+    // 返回取消订阅函数
+    return () => this.off(event, handler);
+  }
+
+  off<K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>) {
+    this.handlers.get(event)?.delete(handler);
+  }
+
+  async emit<K extends keyof EventMap>(event: K, data: EventMap[K]) {
+    const handlers = this.handlers.get(event);
+    if (handlers) {
+      await Promise.all(
+        Array.from(handlers).map(handler => handler(data))
+      );
+    }
+  }
+
+  once<K extends keyof EventMap>(event: K): Promise<EventMap[K]> {
+    return new Promise(resolve => {
+      const unsubscribe = this.on(event, (data) => {
+        unsubscribe();
+        resolve(data);
+      });
+    });
+  }
+}
+
+// 使用示例
+interface AppEvents {
+  'user:login': { userId: string; timestamp: number };
+  'user:logout': { userId: string };
+  'message:received': { from: string; content: string };
+}
+
+const events = new EventEmitter<AppEvents>();
+
+events.on('user:login', ({ userId, timestamp }) => {
+  console.log(`User ${userId} logged in at ${timestamp}`);
+});
+
+events.emit('user:login', { userId: '123', timestamp: Date.now() });
+```
+
+### 1.3 LRU缓存实现
+
+```typescript
+interface CacheNode<K, V> {
+  key: K;
+  value: V;
+  prev: CacheNode<K, V> | null;
+  next: CacheNode<K, V> | null;
+}
+
+/**
+ * LRU (Least Recently Used) 缓存
+ */
+class LRUCache<K, V> {
+  private head: CacheNode<K, V> | null = null;
+  private tail: CacheNode<K, V> | null = null;
+  private cache: Map<K, CacheNode<K, V>> = new Map();
+
+  constructor(private capacity: number) {}
+
+  get(key: K): V | undefined {
+    const node = this.cache.get(key);
+    if (!node) return undefined;
+
+    // 移动到头部
+    this.moveToHead(node);
+    return node.value;
+  }
+
+  put(key: K, value: V): void {
+    const existingNode = this.cache.get(key);
+    
+    if (existingNode) {
+      existingNode.value = value;
+      this.moveToHead(existingNode);
+      return;
+    }
+
+    const newNode: CacheNode<K, V> = {
+      key,
+      value,
+      prev: null,
+      next: null
+    };
+
+    this.cache.set(key, newNode);
+    this.addToHead(newNode);
+
+    if (this.cache.size > this.capacity) {
+      this.removeTail();
+    }
+  }
+
+  private moveToHead(node: CacheNode<K, V>) {
+    this.removeNode(node);
+    this.addToHead(node);
+  }
+
+  private removeNode(node: CacheNode<K, V>) {
+    if (node.prev) {
+      node.prev.next = node.next;
+    } else {
+      this.head = node.next;
+    }
+
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else {
+      this.tail = node.prev;
+    }
+  }
+
+  private addToHead(node: CacheNode<K, V>) {
+    node.prev = null;
+    node.next = this.head;
+
+    if (this.head) {
+      this.head.prev = node;
+    }
+    this.head = node;
+
+    if (!this.tail) {
+      this.tail = node;
+    }
+  }
+
+  private removeTail() {
+    if (!this.tail) return;
+
+    this.cache.delete(this.tail.key);
+    this.removeNode(this.tail);
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+```
+
+## 二、Python 示例
+
+### 2.1 数据处理管道
+
+```python
+from typing import TypeVar, Generic, Callable, List, Any
+from dataclasses import dataclass
+from functools import reduce
+import asyncio
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+@dataclass
+class PipelineResult(Generic[T]):
+    """管道处理结果"""
+    data: T
+    errors: List[str]
+    
+    @property
+    def is_success(self) -> bool:
+        return len(self.errors) == 0
+
+
+class Pipeline(Generic[T]):
+    """数据处理管道"""
+    
+    def __init__(self, initial_data: T):
+        self.data = initial_data
+        self.errors: List[str] = []
+        self.steps: List[Callable] = []
+    
+    def pipe(self, transform: Callable[[T], U]) -> 'Pipeline[U]':
+        """添加处理步骤"""
+        self.steps.append(transform)
+        return self
+    
+    def filter(self, predicate: Callable[[T], bool]) -> 'Pipeline[T]':
+        """过滤数据"""
+        def filter_fn(data: T) -> T:
+            if isinstance(data, list):
+                return [item for item in data if predicate(item)]
+            return data if predicate(data) else None
+        
+        self.steps.append(filter_fn)
+        return self
+    
+    def map(self, transform: Callable[[T], U]) -> 'Pipeline[U]':
+        """映射转换"""
+        def map_fn(data: T) -> U:
+            if isinstance(data, list):
+                return [transform(item) for item in data]
+            return transform(data)
+        
+        self.steps.append(map_fn)
+        return self
+    
+    def reduce(self, reducer: Callable[[U, T], U], initial: U) -> 'Pipeline[U]':
+        """归约"""
+        def reduce_fn(data: T) -> U:
+            if isinstance(data, list):
+                return reduce(reducer, data, initial)
+            return initial
+        
+        self.steps.append(reduce_fn)
+        return self
+    
+    def execute(self) -> PipelineResult[T]:
+        """执行管道"""
+        result = self.data
+        errors = []
+        
+        for step in self.steps:
+            try:
+                result = step(result)
+            except Exception as e:
+                errors.append(f"Step {step.__name__} failed: {str(e)}")
+        
+        return PipelineResult(data=result, errors=errors)
+
+
+# 使用示例
+data = [
+    {"name": "Alice", "age": 30, "score": 85},
+    {"name": "Bob", "age": 25, "score": 92},
+    {"name": "Charlie", "age": 35, "score": 78},
+]
+
+result = (
+    Pipeline(data)
+    .filter(lambda x: x["age"] >= 30)
+    .map(lambda x: {**x, "grade": "A" if x["score"] >= 80 else "B"})
+    .execute()
+)
+
+print(result.data)
+# [{'name': 'Alice', 'age': 30, 'score': 85, 'grade': 'A'}, 
+#  {'name': 'Charlie', 'age': 35, 'score': 78, 'grade': 'B'}]
+```
+
+### 2.2 异步任务调度器
+
+```python
+import asyncio
+from typing import Callable, Any, List, Dict
+from dataclasses import dataclass, field
+from datetime import datetime
+import heapq
+
+@dataclass(order=True)
+class ScheduledTask:
+    """定时任务"""
+    run_at: datetime
+    task_id: int = field(compare=False)
+    func: Callable = field(compare=False)
+    args: tuple = field(compare=False)
+    kwargs: dict = field(compare=False)
+
+
+class TaskScheduler:
+    """异步任务调度器"""
+    
+    def __init__(self):
+        self.tasks: List[ScheduledTask] = []
+        self.task_counter = 0
+        self.running = False
+        self._task_map: Dict[int, ScheduledTask] = {}
+    
+    async def schedule(
+        self, 
+        func: Callable, 
+        delay_seconds: float = 0,
+        *args, 
+        **kwargs
+    ) -> int:
+        """调度任务"""
+        self.task_counter += 1
+        run_at = datetime.now() + asyncio.timedelta(seconds=delay_seconds)
+        
+        task = ScheduledTask(
+            run_at=run_at,
+            task_id=self.task_counter,
+            func=func,
+            args=args,
+            kwargs=kwargs
+        )
+        
+        heapq.heappush(self.tasks, task)
+        self._task_map[self.task_counter] = task
+        
+        return self.task_counter
+    
+    def cancel(self, task_id: int) -> bool:
+        """取消任务"""
+        if task_id in self._task_map:
+            del self._task_map[task_id]
+            return True
+        return False
+    
+    async def start(self):
+        """启动调度器"""
+        self.running = True
+        
+        while self.running:
+            if not self.tasks:
+                await asyncio.sleep(0.1)
+                continue
+            
+            task = self.tasks[0]
+            
+            if task.task_id not in self._task_map:
+                heapq.heappop(self.tasks)
+                continue
+            
+            now = datetime.now()
+            if task.run_at <= now:
+                heapq.heappop(self.tasks)
+                del self._task_map[task.task_id]
+                
+                try:
+                    if asyncio.iscoroutinefunction(task.func):
+                        await task.func(*task.args, **task.kwargs)
+                    else:
+                        task.func(*task.args, **task.kwargs)
+                except Exception as e:
+                    print(f"Task {task.task_id} failed: {e}")
+            else:
+                await asyncio.sleep(0.1)
+    
+    def stop(self):
+        """停止调度器"""
+        self.running = False
+
+
+# 使用示例
+async def send_email(to: str, subject: str):
+    print(f"Sending email to {to}: {subject}")
+    await asyncio.sleep(1)
+    print(f"Email sent to {to}")
+
+async def main():
+    scheduler = TaskScheduler()
+    
+    # 调度任务
+    await scheduler.schedule(send_email, 2, "alice@example.com", "Hello!")
+    await scheduler.schedule(send_email, 5, "bob@example.com", "Hi there!")
+    
+    # 启动调度器
+    await scheduler.start()
+
+# asyncio.run(main())
+```
+
+### 2.3 数据验证器
+
+```python
+from typing import Any, List, Dict, Optional, Union, get_type_hints
+from dataclasses import dataclass
+from functools import wraps
+
+@dataclass
+class ValidationError:
+    """验证错误"""
+    field: str
+    message: str
+    value: Any
+
+class Validator:
+    """数据验证器"""
+    
+    def __init__(self):
+        self.errors: List[ValidationError] = []
+    
+    def validate_type(self, value: Any, expected_type: type, field: str) -> bool:
+        """验证类型"""
+        if not isinstance(value, expected_type):
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Expected {expected_type.__name__}, got {type(value).__name__}",
+                value=value
+            ))
+            return False
+        return True
+    
+    def validate_range(
+        self, 
+        value: Union[int, float], 
+        min_val: Optional[Union[int, float]] = None,
+        max_val: Optional[Union[int, float]] = None,
+        field: str = ""
+    ) -> bool:
+        """验证范围"""
+        if min_val is not None and value < min_val:
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Value {value} is less than minimum {min_val}",
+                value=value
+            ))
+            return False
+        
+        if max_val is not None and value > max_val:
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Value {value} is greater than maximum {max_val}",
+                value=value
+            ))
+            return False
+        
+        return True
+    
+    def validate_length(
+        self,
+        value: Union[str, list],
+        min_len: Optional[int] = None,
+        max_len: Optional[int] = None,
+        field: str = ""
+    ) -> bool:
+        """验证长度"""
+        length = len(value)
+        
+        if min_len is not None and length < min_len:
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Length {length} is less than minimum {min_len}",
+                value=value
+            ))
+            return False
+        
+        if max_len is not None and length > max_len:
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Length {length} is greater than maximum {max_len}",
+                value=value
+            ))
+            return False
+        
+        return True
+    
+    def validate_pattern(self, value: str, pattern: str, field: str = "") -> bool:
+        """验证正则表达式"""
+        import re
+        if not re.match(pattern, value):
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Value '{value}' does not match pattern '{pattern}'",
+                value=value
+            ))
+            return False
+        return True
+    
+    def validate_required(self, value: Any, field: str = "") -> bool:
+        """验证必填"""
+        if value is None or value == "":
+            self.errors.append(ValidationError(
+                field=field,
+                message=f"Field '{field}' is required",
+                value=value
+            ))
+            return False
+        return True
+    
+    @property
+    def is_valid(self) -> bool:
+        return len(self.errors) == 0
+
+
+def validate_input(**rules):
+    """输入验证装饰器"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            validator = Validator()
+            
+            # 获取函数参数
+            hints = get_type_hints(func)
+            sig = func.__code__.co_varnames[:func.__code__.co_argcount]
+            bound_args = dict(zip(sig, args))
+            bound_args.update(kwargs)
+            
+            # 验证每个参数
+            for param, rule in rules.items():
+                if param in bound_args:
+                    value = bound_args[param]
+                    
+                    if rule.get('required', False):
+                        validator.validate_required(value, param)
+                    
+                    if value is not None:
+                        if 'type' in rule:
+                            validator.validate_type(value, rule['type'], param)
+                        
+                        if 'min' in rule or 'max' in rule:
+                            validator.validate_range(
+                                value, 
+                                rule.get('min'), 
+                                rule.get('max'), 
+                                param
+                            )
+                        
+                        if 'min_len' in rule or 'max_len' in rule:
+                            validator.validate_length(
+                                value,
+                                rule.get('min_len'),
+                                rule.get('max_len'),
+                                param
+                            )
+                        
+                        if 'pattern' in rule:
+                            validator.validate_pattern(value, rule['pattern'], param)
+            
+            if not validator.is_valid:
+                raise ValueError(validator.errors)
+            
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# 使用示例
+@validate_input(
+    name={'required': True, 'type': str, 'min_len': 2, 'max_len': 50},
+    age={'required': True, 'type': int, 'min': 0, 'max': 150},
+    email={'required': True, 'type': str, 'pattern': r'^[\w\.-]+@[\w\.-]+\.\w+$'}
+)
+def create_user(name: str, age: int, email: str):
+    return {"name": name, "age": age, "email": email}
+
+# create_user("Alice", 30, "alice@example.com")  # 成功
+# create_user("", 30, "alice@example.com")  # 失败：name长度不足
+# create_user("Alice", 200, "alice@example.com")  # 失败：age超出范围
+```
+
+## 三、Go 示例
+
+### 3.1 并发工作池
+
+```go
+package pool
+
+import (
+    "context"
+    "sync"
+)
+
+// Task 表示一个任务
+type Task func() error
+
+// WorkerPool 工作池
+type WorkerPool struct {
+    workers    int
+    taskQueue  chan Task
+    resultChan chan error
+    wg         sync.WaitGroup
+    ctx        context.Context
+    cancel     context.CancelFunc
+}
+
+// NewWorkerPool 创建工作池
+func NewWorkerPool(workers int, queueSize int) *WorkerPool {
+    ctx, cancel := context.WithCancel(context.Background())
+    
+    return &WorkerPool{
+        workers:    workers,
+        taskQueue:  make(chan Task, queueSize),
+        resultChan: make(chan error, queueSize),
+        ctx:        ctx,
+        cancel:     cancel,
+    }
+}
+
+// Start 启动工作池
+func (p *WorkerPool) Start() {
+    for i := 0; i < p.workers; i++ {
+        p.wg.Add(1)
+        go p.worker()
+    }
+}
+
+// worker 工作协程
+func (p *WorkerPool) worker() {
+    defer p.wg.Done()
+    
+    for {
+        select {
+        case task, ok := <-p.taskQueue:
+            if !ok {
+                return
+            }
+            err := task()
+            p.resultChan <- err
+        case <-p.ctx.Done():
+            return
+        }
+    }
+}
+
+// Submit 提交任务
+func (p *WorkerPool) Submit(task Task) bool {
+    select {
+    case p.taskQueue <- task:
+        return true
+    case <-p.ctx.Done():
+        return false
+    }
+}
+
+// Results 获取结果通道
+func (p *WorkerPool) Results() <-chan error {
+    return p.resultChan
+}
+
+// Stop 停止工作池
+func (p *WorkerPool) Stop() {
+    p.cancel()
+    close(p.taskQueue)
+    p.wg.Wait()
+    close(p.resultChan)
+}
+
+// Wait 等待所有任务完成
+func (p *WorkerPool) Wait() {
+    close(p.taskQueue)
+    p.wg.Wait()
+}
+
+// 使用示例
+/*
+func main() {
+    pool := NewWorkerPool(5, 100)
+    pool.Start()
+    
+    var wg sync.WaitGroup
+    
+    // 提交任务
+    for i := 0; i < 20; i++ {
+        wg.Add(1)
+        pool.Submit(func() error {
+            defer wg.Done()
+            time.Sleep(100 * time.Millisecond)
+            fmt.Println("Task completed")
+            return nil
+        })
+    }
+    
+    // 等待所有任务完成
+    go func() {
+        wg.Wait()
+        pool.Stop()
+    }()
+    
+    // 收集结果
+    for err := range pool.Results() {
+        if err != nil {
+            fmt.Printf("Error: %v\n", err)
+        }
+    }
+}
+*/
+```
+
+### 3.2 中间件链
+
+```go
+package middleware
+
+import (
+    "net/http"
+    "time"
+)
+
+// Handler 处理函数类型
+type Handler func(w http.ResponseWriter, r *http.Request) error
+
+// Middleware 中间件类型
+type Middleware func(Handler) Handler
+
+// Chain 中间件链
+type Chain struct {
+    middlewares []Middleware
+}
+
+// NewChain 创建中间件链
+func NewChain(middlewares ...Middleware) *Chain {
+    return &Chain{middlewares: middlewares}
+}
+
+// Then 应用中间件链
+func (c *Chain) Then(final Handler) Handler {
+    for i := len(c.middlewares) - 1; i >= 0; i-- {
+        final = c.middlewares[i](final)
+    }
+    return final
+}
+
+// Append 追加中间件
+func (c *Chain) Append(middlewares ...Middleware) *Chain {
+    c.middlewares = append(c.middlewares, middlewares...)
+    return c
+}
+
+// 常用中间件
+
+// Logging 日志中间件
+func Logging(logger interface{ Printf(format string, args ...interface{}) }) Middleware {
+    return func(next Handler) Handler {
+        return func(w http.ResponseWriter, r *http.Request) error {
+            start := time.Now()
+            
+            err := next(w, r)
+            
+            logger.Printf(
+                "[%s] %s %s %v",
+                r.Method,
+                r.URL.Path,
+                time.Since(start),
+                err,
+            )
+            
+            return err
+        }
+    }
+}
+
+// Recovery 恢复中间件
+func Recovery(recoverFunc func(error)) Middleware {
+    return func(next Handler) Handler {
+        return func(w http.ResponseWriter, r *http.Request) (err error) {
+            defer func() {
+                if recovered := recover(); recovered != nil {
+                    if e, ok := recovered.(error); ok {
+                        err = e
+                    } else {
+                        err = fmt.Errorf("%v", recovered)
+                    }
+                    recoverFunc(err)
+                }
+            }()
+            return next(w, r)
+        }
+    }
+}
+
+// RateLimit 限流中间件
+func RateLimit(requestsPerSecond int) Middleware {
+    limiter := make(chan struct{}, requestsPerSecond)
+    
+    go func() {
+        ticker := time.NewTicker(time.Second / time.Duration(requestsPerSecond))
+        for range ticker.C {
+            select {
+            case limiter <- struct{}{}:
+            default:
+            }
+        }
+    }()
+    
+    return func(next Handler) Handler {
+        return func(w http.ResponseWriter, r *http.Request) error {
+            select {
+            case <-limiter:
+                return next(w, r)
+            default:
+                http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+                return fmt.Errorf("rate limit exceeded")
+            }
+        }
+    }
+}
+
+// CORS 跨域中间件
+func CORS(allowedOrigins []string) Middleware {
+    origins := make(map[string]bool)
+    for _, o := range allowedOrigins {
+        origins[o] = true
+    }
+    
+    return func(next Handler) Handler {
+        return func(w http.ResponseWriter, r *http.Request) error {
+            origin := r.Header.Get("Origin")
+            if origins[origin] || origins["*"] {
+                w.Header().Set("Access-Control-Allow-Origin", origin)
+                w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            }
+            
+            if r.Method == "OPTIONS" {
+                w.WriteHeader(http.StatusOK)
+                return nil
+            }
+            
+            return next(w, r)
+        }
+    }
+}
+
+// 使用示例
+/*
+func main() {
+    chain := NewChain(
+        Logging(log.Default()),
+        Recovery(func(err error) { log.Printf("Recovered: %v", err) }),
+        RateLimit(100),
+        CORS([]string{"*"}),
+    )
+    
+    handler := chain.Then(func(w http.ResponseWriter, r *http.Request) error {
+        w.Write([]byte("Hello, World!"))
+        return nil
+    })
+    
+    http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if err := handler(w, r); err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+        }
+    }))
+    
+    http.ListenAndServe(":8080", nil)
+}
+*/
+```
+
+## 四、SQL 示例
+
+### 4.1 复杂查询示例
+
+```sql
+-- 用户行为分析查询
+
+-- 1. 用户活跃度统计
+WITH daily_active_users AS (
+    SELECT 
+        DATE(created_at) AS activity_date,
+        COUNT(DISTINCT user_id) AS dau
+    FROM user_activities
+    WHERE created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)
+    GROUP BY DATE(created_at)
+),
+monthly_active_users AS (
+    SELECT 
+        DATE_FORMAT(created_at, '%Y-%m') AS activity_month,
+        COUNT(DISTINCT user_id) AS mau
+    FROM user_activities
+    WHERE created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH)
+    GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+)
+SELECT 
+    d.activity_date,
+    d.dau,
+    m.mau,
+    ROUND(d.dau * 1.0 / m.mau, 4) AS stickiness_ratio
+FROM daily_active_users d
+JOIN monthly_active_users m 
+    ON DATE_FORMAT(d.activity_date, '%Y-%m') = m.activity_month
+ORDER BY d.activity_date;
+
+-- 2. 用户留存分析
+WITH user_cohorts AS (
+    SELECT 
+        user_id,
+        DATE(MIN(created_at)) AS cohort_date
+    FROM user_activities
+    GROUP BY user_id
+),
+retention_data AS (
+    SELECT 
+        c.cohort_date,
+        DATEDIFF(a.created_at, c.cohort_date) AS days_since_first_visit,
+        COUNT(DISTINCT c.user_id) AS retained_users
+    FROM user_cohorts c
+    JOIN user_activities a ON c.user_id = a.user_id
+    WHERE c.cohort_date >= DATE_SUB(CURRENT_DATE, INTERVAL 90 DAY)
+    GROUP BY c.cohort_date, DATEDIFF(a.created_at, c.cohort_date)
+),
+cohort_sizes AS (
+    SELECT 
+        cohort_date,
+        COUNT(DISTINCT user_id) AS cohort_size
+    FROM user_cohorts
+    WHERE cohort_date >= DATE_SUB(CURRENT_DATE, INTERVAL 90 DAY)
+    GROUP BY cohort_date
+)
+SELECT 
+    r.cohort_date,
+    c.cohort_size,
+    SUM(CASE WHEN r.days_since_first_visit = 0 THEN r.retained_users ELSE 0 END) AS day_0,
+    SUM(CASE WHEN r.days_since_first_visit = 1 THEN r.retained_users ELSE 0 END) AS day_1,
+    SUM(CASE WHEN r.days_since_first_visit = 7 THEN r.retained_users ELSE 0 END) AS day_7,
+    SUM(CASE WHEN r.days_since_first_visit = 30 THEN r.retained_users ELSE 0 END) AS day_30,
+    ROUND(SUM(CASE WHEN r.days_since_first_visit = 7 THEN r.retained_users ELSE 0 END) * 100.0 / c.cohort_size, 2) AS day_7_retention_rate
+FROM retention_data r
+JOIN cohort_sizes c ON r.cohort_date = c.cohort_date
+GROUP BY r.cohort_date, c.cohort_size
+ORDER BY r.cohort_date;
+
+-- 3. 商品销售分析
+WITH product_sales AS (
+    SELECT 
+        p.product_id,
+        p.product_name,
+        c.category_name,
+        SUM(oi.quantity) AS total_quantity,
+        SUM(oi.quantity * oi.unit_price) AS total_revenue,
+        COUNT(DISTINCT o.order_id) AS order_count,
+        COUNT(DISTINCT o.user_id) AS buyer_count
+    FROM products p
+    JOIN categories c ON p.category_id = c.category_id
+    JOIN order_items oi ON p.product_id = oi.product_id
+    JOIN orders o ON oi.order_id = o.order_id
+    WHERE o.status = 'completed'
+        AND o.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)
+    GROUP BY p.product_id, p.product_name, c.category_name
+),
+category_stats AS (
+    SELECT 
+        category_name,
+        SUM(total_revenue) AS category_revenue,
+        SUM(total_quantity) AS category_quantity
+    FROM product_sales
+    GROUP BY category_name
+)
+SELECT 
+    ps.product_id,
+    ps.product_name,
+    ps.category_name,
+    ps.total_quantity,
+    ps.total_revenue,
+    ps.order_count,
+    ps.buyer_count,
+    ROUND(ps.total_revenue * 100.0 / cs.category_revenue, 2) AS revenue_share_pct,
+    RANK() OVER (PARTITION BY ps.category_name ORDER BY ps.total_revenue DESC) AS category_rank,
+    RANK() OVER (ORDER BY ps.total_revenue DESC) AS overall_rank
+FROM product_sales ps
+JOIN category_stats cs ON ps.category_name = cs.category_name
+ORDER BY ps.total_revenue DESC;
+```
+
+---
+
+*本文档包含多种编程语言的代码示例，涵盖JavaScript/TypeScript、Python、Go和SQL，总计约8000字，可用于代码生成和理解测试。*
