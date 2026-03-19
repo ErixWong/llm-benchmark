@@ -50,7 +50,7 @@ export async function runLlmBenchmarkTest(options) {
   // 创建带重试的HTTP客户端（自动处理URL规范化）
   const httpClient = createHttpClient({
     baseURL: url, // createHttpClient会自动规范化
-    timeout: DEFAULT_TIMEOUT,  // 使用环境变量配置
+    timeout: timeout,  // 使用传入的超时参数
     headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}
   });
 

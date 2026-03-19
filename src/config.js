@@ -109,7 +109,7 @@ export function mergeConfig(defaultConfig, userConfig) {
   const result = { ...defaultConfig };
   
   for (const key in userConfig) {
-    if (userConfig.hasOwnProperty(key)) {
+    if (Object.hasOwn(userConfig, key)) {
       if (typeof userConfig[key] === 'object' && !Array.isArray(userConfig[key]) && userConfig[key] !== null) {
         result[key] = mergeConfig(result[key] || {}, userConfig[key]);
       } else {

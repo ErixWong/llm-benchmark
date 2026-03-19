@@ -127,7 +127,8 @@ async function executeWarmupWithRetry(httpClient, url, model, warmupEndTime, wor
     
     while (retryCount < maxRetries && !success) {
       try {
-        const response = await httpClient.post(url, {
+        // 使用空路径，因为 baseURL 已经包含完整路径
+        const response = await httpClient.post('', {
           model: model,
           messages: [{ role: 'user', content: 'warmup' }],
           max_tokens: 5
