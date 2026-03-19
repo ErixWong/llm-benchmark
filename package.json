@@ -7,9 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "test:concurrency": "node tests/concurrency.test.js",
-    "test:token-speed": "node tests/token-speed.test.js",
-    "test:all": "npm run test:concurrency && npm run test:token-speed",
-    "benchmark": "node src/benchmark.js"
+    "test:benchmark": "node tests/llm-benchmark.test.js",
+    "test:all": "npm run test:concurrency && npm run test:benchmark",
+    "benchmark": "node src/index.js all"
   },
   "keywords": [
     "api",
