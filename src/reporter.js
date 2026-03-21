@@ -699,6 +699,17 @@ function generateConcurrencyHtml(results) {
     <div class="card card-concurrency">
       <h2>📊 并发能力测试</h2>
       
+      <!-- 指标说明 -->
+      <div class="metric-explanation" style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 12px; line-height: 1.6;">
+        <strong>📖 指标说明：</strong>
+        <span style="margin-left: 8px;">
+          <b>RPS</b> = 每秒请求数 (Requests Per Second)，衡量吞吐量 |
+          <b>P50/P90/P99</b> = 响应时间百分位数，P90表示90%的请求响应时间低于此值 |
+          <b>TTFT</b> = 首Token延迟 (Time To First Token) |
+          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)
+        </span>
+      </div>
+      
       <div class="config-row">
         <div class="config-table">
           <h3>测试配置</h3>
@@ -734,7 +745,7 @@ function generateConcurrencyHtml(results) {
       
       <div class="charts-row">
         <div class="chart-card">
-          <h3>延迟分布</h3>
+          <h3>延迟分布 <span style="font-size: 11px; color: #7f8c8d; font-weight: normal;">(P50=中位数, P99=最慢1%)</span></h3>
           <div class="chart-container">
             <canvas id="latencyChart"></canvas>
           </div>
@@ -922,27 +933,31 @@ function generateConclusion(results) {
   const conclusions = [];
 
   if (results.concurrency) {
-    const rps = results.concurrency.metrics.throughput.rps;
-    const latency = results.concurrency.metrics.latency.p90;
-    const errors = results.concurrency.metrics.errors.rate;
+    const r = results.concurrency;
+    const rps = r.metrics.throughput.rps;
+    const latency = r.metrics.latency.p90;
+    const errors = r.metrics.errors.rate;
+    const concurrency = r.config.concurrency;
 
     if (rps >= 50 && latency < 1000 && errors < 1) {
-      conclusions.push('并发能力测试结果显示系统性能良好，能够处理预期的负载。');
+      conclusions.push(`并发测试（${concurrency}连接）: 系统性能良好，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。`);
     } else if (rps >= 20 && latency < 2000 && errors < 5) {
-      conclusions.push('并发能力测试结果显示系统性能可接受，但仍有优化空间。');
+      conclusions.push(`并发测试（${concurrency}连接）: 系统性能可接受，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。建议优化。`);
     } else {
-      conclusions.push('并发能力测试结果显示系统存在性能问题，建议进行优化。');
+      conclusions.push(`并发测试（${concurrency}连接）: 系统存在性能问题，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。需要优化。`);
     }
   }
 
   if (results.tokenSpeed && results.tokenSpeed.success) {
-    const tps = results.tokenSpeed.metrics.tps.mean;
-    const ttft = results.tokenSpeed.metrics.ttft.mean;
+    const r = results.tokenSpeed;
+    const tps = r.metrics.tps.mean;
+    const ttft = r.metrics.ttft.mean;
+    const concurrency = r.config.concurrency;
 
     if (tps >= 30 && ttft < 1000) {
-      conclusions.push('Token生成速度测试结果显示LLM API性能良好。');
+      conclusions.push(`Token速度测试（${concurrency}并发）: 性能良好，平均 ${tps.toFixed(1)} TPS，TTFT ${ttft.toFixed(0)}ms。`);
     } else {
-      conclusions.push('Token生成速度测试结果显示LLM API性能有待提升。');
+      conclusions.push(`Token速度测试（${concurrency}并发）: 性能有待提升，平均 ${tps.toFixed(1)} TPS，TTFT ${ttft.toFixed(0)}ms。`);
     }
   }
 
