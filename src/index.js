@@ -136,8 +136,15 @@ program
         model,
         outputDir: options.output
       });
+      
+      // 为每份报告创建单独的目录
+      const now = new Date();
+      const pad = (n) => n.toString().padStart(2, '0');
+      const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      const reportDir = `${options.output}/report-${localTimestamp}`;
+      
       console.log(chalk.green('✅ 测试完成!'));
-      await generateReport({ concurrency: results }, options.output);
+      await generateReport({ concurrency: results }, reportDir);
     } catch (error) {
       console.error(chalk.red('❌ 测试失败:'), error.message);
       process.exit(1);
