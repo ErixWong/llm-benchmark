@@ -224,6 +224,10 @@ async function generateHtmlReport(results, outputDir, baseName) {
     h2 { color: #34495e; margin: 15px 0 10px; font-size: 1.2rem; }
     h3 { color: #7f8c8d; margin: 10px 0 5px; font-size: 1rem; }
     .card { background: white; border-radius: 8px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .card-concurrency { border-left: 4px solid #3498db; }
+    .card-tokenspeed { border-left: 4px solid #27ae60; }
+    .card-concurrency h2 { color: #2980b9; }
+    .card-tokenspeed h2 { color: #1e8449; }
     .config-row { display: flex; gap: 20px; margin-bottom: 15px; }
     .config-table { flex: 1; }
     .config-metrics { flex: 1; }
@@ -692,7 +696,7 @@ function generateConcurrencyHtml(results) {
   
   const r = results.concurrency;
   return `
-    <div class="card">
+    <div class="card card-concurrency">
       <h2>📊 并发能力测试</h2>
       <h3>测试配置</h3>
       <table>
@@ -759,7 +763,7 @@ function generateTokenSpeedHtml(results, chartData) {
     : `${(totalTimeMs / 60000).toFixed(1)}分钟`;
   
   return `
-    <div class="card">
+    <div class="card card-tokenspeed">
       <h2>⚡ Token生成速度测试</h2>
       
       <div class="config-row">
