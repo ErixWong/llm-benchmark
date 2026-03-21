@@ -20,18 +20,23 @@ export async function runConcurrencyTest(options) {
     rampUp = 10,
     url,
     apiKey,
-    model = 'gpt-3.5-turbo',
+    model,
     outputDir = './results'
   } = options;
+
+  // 必填参数检查
+  if (!url) {
+    throw new Error('API URL is required. Set API_BASE_URL in .env or use --url option.');
+  }
+  
+  if (!model) {
+    throw new Error('Model is required. Set API_MODEL in .env or use --model option.');
+  }
 
   // 参数验证
   const validation = validateParams(options, concurrencyTestRules);
   if (!validation.valid) {
     throw new Error(`参数验证失败: ${validation.errors.join(', ')}`);
-  }
-
-  if (!url) {
-    throw new Error('API URL is required. Set API_BASE_URL in .env or use --url option.');
   }
 
   // 规范化URL（用于autocannon，它不使用httpClient）
