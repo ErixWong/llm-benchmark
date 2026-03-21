@@ -101,7 +101,7 @@ export async function runConcurrencyTest(options) {
     spinner.succeed('并发测试完成');
 
     // 处理结果
-    const processedResult = processConcurrencyResult(result);
+    const processedResult = processConcurrencyResult(result, model);
     
     // 打印摘要
     printConcurrencySummary(processedResult);
@@ -179,9 +179,10 @@ async function executeWarmupWithRetry(httpClient, url, model, warmupEndTime, wor
 /**
  * 处理并发测试结果
  * @param {Object} result - autocannon原始结果
+ * @param {string} model - 模型名称
  * @returns {Object} 处理后的结果
  */
-function processConcurrencyResult(result) {
+function processConcurrencyResult(result, model) {
   // 计算真实错误数：网络错误 + 超时 + 非2xx响应
   const networkErrors = result.errors || 0;
   const timeouts = result.timeouts || 0;
@@ -215,6 +216,7 @@ function processConcurrencyResult(result) {
     timestamp: new Date().toISOString(),
     config: {
       url: result.url,
+      model: model,
       concurrency: result.connections,
       duration: result.duration,
       pipelining: result.pipelining

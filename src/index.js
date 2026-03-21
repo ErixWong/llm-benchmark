@@ -137,7 +137,7 @@ program
         outputDir: options.output
       });
       console.log(chalk.green('✅ 测试完成!'));
-      await generateReport(results, options.output);
+      await generateReport({ concurrency: results }, options.output);
     } catch (error) {
       console.error(chalk.red('❌ 测试失败:'), error.message);
       process.exit(1);
@@ -289,6 +289,17 @@ program
   .description('运行所有测试')
   .option('-o, --output <dir>', '输出目录', './results')
   .option('-m, --model <model>', '模型名称')
+  // 并发测试参数
+  .option('--concurrency-concurrency <number>', '并发测试: 并发连接数', '10')
+  .option('--concurrency-duration <seconds>', '并发测试: 持续时间(秒)', '60')
+  .option('--concurrency-rampup <seconds>', '并发测试: 预热时间(秒)', '10')
+  // Token速度测试参数
+  .option('--token-concurrency <number>', 'Token测试: 并发数', '4')
+  .option('--token-rounds <number>', 'Token测试: 采样轮数', '5')
+  .option('--token-sample-count <number>', 'Token测试: 每次请求随机抽取的样本数量', '0')
+  .option('--token-max-output <number>', 'Token测试: 最大输出Token数', '30000')
+  .option('--token-mode <mode>', 'Token测试: 并发模式 (batch/pipeline)', 'pipeline')
+  .option('--token-timeout <seconds>', 'Token测试: 请求超时时间(秒)', '90')
   .action(async (options) => {
     const url = process.env.API_BASE_URL;
     const apiKey = process.env.API_KEY;
@@ -304,12 +315,67 @@ program
       process.exit(1);
     }
     
+    // 解析参数
+    const concurrencyConcurrency = safeParseInt(options.concurrencyConcurrency, 10, 'concurrencyConcurrency');
+    const concurrencyDuration = safeParseInt(options.concurrencyDuration, 60, 'concurrencyDuration');
+    const concurrencyRampup = safeParseInt(options.concurrencyRampup, 10, 'concurrencyRampup');
+    
+    const tokenConcurrency = safeParseInt(options.tokenConcurrency, 4, 'tokenConcurrency');
+    const tokenRounds = safeParseInt(options.tokenRounds, 5, 'tokenRounds');
+    const tokenSampleCount = safeParseInt(options.tokenSampleCount, 0, 'tokenSampleCount');
+    const tokenMaxOutput = safeParseInt(options.tokenMaxOutput, 30000, 'tokenMaxOutput');
+    const tokenTimeout = safeParseInt(options.tokenTimeout, 90, 'tokenTimeout') * 1000;
+    const tokenMode = options.tokenMode;
+    const tokenSamples = tokenConcurrency * tokenRounds;
+    
+    // 验证并发模式
+    if (!['batch', 'pipeline'].includes(tokenMode)) {
+      console.warn(chalk.yellow(`⚠️ 无效的并发模式 "${tokenMode}"，使用默认值 "pipeline"`));
+    }
+    
     console.log(chalk.blue('🔬 开始完整性能测试...'));
     console.log(chalk.gray(`模型: ${model}`));
+    
+    // 扫描样本文件（用于Token测试）
+    let sampleFiles = [];
+    if (tokenSampleCount > 0) {
+      try {
+        const dataDir = path.join(process.cwd(), 'data');
+        sampleFiles = await scanSampleFiles(dataDir);
+        sampleFiles = sampleFiles.filter(f => {
+          const name = path.basename(f);
+          return name.includes('-8k') ||
+                 name.includes('-16k') ||
+                 name.startsWith('sample-') ||
+                 name.startsWith('novel-') ||
+                 name.startsWith('tech-news-') ||
+                 name.startsWith('conversation-') ||
+                 name.startsWith('code-samples-') ||
+                 name.startsWith('multimodal-');
+        });
+        
+        if (sampleFiles.length === 0) {
+          console.error(chalk.red('❌ 没有找到样本文件'));
+          process.exit(1);
+        }
+        console.log(chalk.gray(`📚 找到 ${sampleFiles.length} 个样本文件`));
+      } catch (error) {
+        console.error(chalk.red(`❌ 无法读取样本目录: ${error.message}`));
+        process.exit(1);
+      }
+    }
+    
+    // 创建输入生成器
+    const generateInputText = createInputGenerator(tokenSampleCount, sampleFiles);
+    
     try {
       // 并发测试
       console.log(chalk.cyan('\n📊 阶段1: 并发能力测试'));
+      console.log(`  并发数: ${concurrencyConcurrency}, 持续时间: ${concurrencyDuration}s, 预热: ${concurrencyRampup}s`);
       const concurrencyResults = await runConcurrencyTest({
+        concurrency: concurrencyConcurrency,
+        duration: concurrencyDuration,
+        rampUp: concurrencyRampup,
         url,
         apiKey,
         model,
@@ -318,11 +384,20 @@ program
 
       // Token速度测试
       console.log(chalk.cyan('\n📊 阶段2: Token生成速度测试'));
+      console.log(`  并发数: ${tokenConcurrency}, 轮数: ${tokenRounds}, 总采样: ${tokenSamples}`);
+      console.log(`  最大输出: ${tokenMaxOutput} tokens, 超时: ${tokenTimeout / 1000}s, 模式: ${tokenMode}`);
+      
       const tokenSpeedResults = await runLlmBenchmarkTest({
         url,
         apiKey,
         model,
-        outputDir: options.output
+        maxOutputTokens: tokenMaxOutput,
+        concurrency: tokenConcurrency,
+        concurrencyMode: tokenMode,
+        samples: tokenSamples,
+        sampleCount: tokenSampleCount,
+        generateInputText,
+        timeout: tokenTimeout
       });
 
       // 生成综合报告

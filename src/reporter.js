@@ -698,31 +698,37 @@ function generateConcurrencyHtml(results) {
   return `
     <div class="card card-concurrency">
       <h2>📊 并发能力测试</h2>
-      <h3>测试配置</h3>
-      <table>
-        <tr><th>参数</th><th>值</th></tr>
-        <tr><td>API URL</td><td>${r.config.url || 'N/A'}</td></tr>
-        <tr><td>模型</td><td>${r.config.model || 'N/A'}</td></tr>
-        <tr><td>并发数</td><td>${r.config.concurrency}</td></tr>
-        <tr><td>持续时间</td><td>${r.config.duration.toFixed(2)}s</td></tr>
-      </table>
       
-      <div class="grid">
-        <div class="metric-card">
-          <div class="metric-value">${r.metrics.throughput.rps.toFixed(1)}</div>
-          <div class="metric-label">平均 RPS</div>
+      <div class="config-row">
+        <div class="config-table">
+          <h3>测试配置</h3>
+          <table>
+            <tr><th>参数</th><th>值</th></tr>
+            <tr><td>API URL</td><td>${r.config.url || 'N/A'}</td></tr>
+            <tr><td>模型</td><td>${r.config.model || 'N/A'}</td></tr>
+            <tr><td>并发数</td><td>${r.config.concurrency}</td></tr>
+            <tr><td>持续时间</td><td>${r.config.duration.toFixed(2)}s</td></tr>
+          </table>
         </div>
-        <div class="metric-card">
-          <div class="metric-value">${r.metrics.latency.p90.toFixed(0)}ms</div>
-          <div class="metric-label">P90 响应时间</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value ${r.metrics.errors.rate < 1 ? 'good' : r.metrics.errors.rate < 5 ? 'warning' : 'bad'}">${r.metrics.errors.rate.toFixed(2)}%</div>
-          <div class="metric-label">错误率</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value">${r.metrics.throughput.total}</div>
-          <div class="metric-label">总请求数</div>
+        <div class="config-metrics">
+          <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+            <div class="metric-card">
+              <div class="metric-value">${r.metrics.throughput.rps.toFixed(1)}</div>
+              <div class="metric-label">平均 RPS</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value">${r.metrics.latency.p90.toFixed(0)}ms</div>
+              <div class="metric-label">P90 响应时间</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value ${r.metrics.errors.rate < 1 ? 'good' : r.metrics.errors.rate < 5 ? 'warning' : 'bad'}">${r.metrics.errors.rate.toFixed(2)}%</div>
+              <div class="metric-label">错误率</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value">${r.metrics.throughput.total}</div>
+              <div class="metric-label">总请求数</div>
+            </div>
+          </div>
         </div>
       </div>
       

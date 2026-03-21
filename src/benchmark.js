@@ -21,10 +21,15 @@ async function main() {
   
   const url = config.api.baseUrl || process.env.API_BASE_URL;
   const apiKey = config.api.apiKey || process.env.API_KEY;
-  const model = config.api.model || process.env.API_MODEL || 'gpt-3.5-turbo';
+  const model = config.api.model || process.env.API_MODEL;
 
   if (!url) {
     console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_BASE_URL'));
+    process.exit(1);
+  }
+  
+  if (!model) {
+    console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_MODEL'));
     process.exit(1);
   }
 

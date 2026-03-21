@@ -52,7 +52,7 @@ function getDefaultConfig() {
     api: {
       baseUrl: process.env.API_BASE_URL || '',
       apiKey: process.env.API_KEY || '',
-      model: process.env.API_MODEL || 'gpt-3.5-turbo',
+      model: process.env.API_MODEL || '',
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json'
