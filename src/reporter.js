@@ -68,65 +68,6 @@ async function generateMarkdownReport(results, outputDir, baseName) {
   lines.push(`**测试时间**: ${new Date().toLocaleString('zh-CN')}`);
   lines.push('');
 
-  // 并发测试结果
-  if (results.concurrency) {
-    lines.push('## 📊 并发能力测试');
-    lines.push('');
-    lines.push('### 测试配置');
-    lines.push('');
-    lines.push('| 参数 | 值 |');
-    lines.push('|------|-----|');
-    lines.push(`| API URL | ${results.concurrency.config.url || 'N/A'} |`);
-    lines.push(`| 模型 | ${results.concurrency.config.model || 'N/A'} |`);
-    lines.push(`| 并发数 | ${results.concurrency.config.concurrency} |`);
-    lines.push(`| 持续时间 | ${results.concurrency.config.duration.toFixed(2)}s |`);
-    lines.push('');
-
-    lines.push('### 吞吐量');
-    lines.push('');
-    lines.push('| 指标 | 值 |');
-    lines.push('|------|-----|');
-    lines.push(`| 平均 RPS | ${results.concurrency.metrics.throughput.rps.toFixed(2)} req/s |`);
-    lines.push(`| 最大 RPS | ${results.concurrency.metrics.throughput.maxRps.toFixed(2)} req/s |`);
-    lines.push(`| 总请求数 | ${results.concurrency.metrics.throughput.total} |`);
-    lines.push(`| 成功请求 | ${results.concurrency.metrics.throughput.success} |`);
-    lines.push(`| 成功率 | ${(results.concurrency.metrics.throughput.total > 0 ? (results.concurrency.metrics.throughput.success / results.concurrency.metrics.throughput.total * 100) : 0).toFixed(2)}% |`);
-    lines.push('');
-
-    lines.push('### 响应时间');
-    lines.push('');
-    lines.push('| 指标 | 值 |');
-    lines.push('|------|-----|');
-    lines.push(`| 平均 | ${formatLatency(results.concurrency.metrics.latency.mean)} |`);
-    lines.push(`| 最小 | ${formatLatency(results.concurrency.metrics.latency.min)} |`);
-    lines.push(`| 最大 | ${formatLatency(results.concurrency.metrics.latency.max)} |`);
-    lines.push(`| P50 | ${formatLatency(results.concurrency.metrics.latency.p50)} |`);
-    lines.push(`| P75 | ${formatLatency(results.concurrency.metrics.latency.p75)} |`);
-    lines.push(`| P90 | ${formatLatency(results.concurrency.metrics.latency.p90)} |`);
-    lines.push(`| P99 | ${formatLatency(results.concurrency.metrics.latency.p99)} |`);
-    lines.push('');
-
-    lines.push('### 错误统计');
-    lines.push('');
-    lines.push('| 指标 | 值 |');
-    lines.push('|------|-----|');
-    lines.push(`| 错误率 | ${results.concurrency.metrics.errors.rate.toFixed(2)}% |`);
-    lines.push(`| 总错误 | ${results.concurrency.metrics.errors.total} |`);
-    lines.push(`| 网络错误 | ${results.concurrency.metrics.errors.networkErrors} |`);
-    lines.push(`| 超时 | ${results.concurrency.metrics.errors.timeouts} |`);
-    lines.push(`| HTTP错误 | ${results.concurrency.metrics.errors.httpErrors} |`);
-    
-    // HTTP错误详情
-    if (results.concurrency.metrics.errors.details && results.concurrency.metrics.errors.details.length > 0) {
-      lines.push('');
-      lines.push('**HTTP错误详情:**');
-      for (const detail of results.concurrency.metrics.errors.details) {
-        lines.push(`- ${detail.code} (${detail.category}): ${detail.count} 次`);
-      }
-    }
-    lines.push('');
-  }
-
   // Token速度测试结果
   if (results.tokenSpeed && results.tokenSpeed.success) {
     lines.push('## ⚡ Token生成速度测试');
@@ -173,6 +114,31 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     lines.push(`| 平均 | ${results.tokenSpeed.metrics.outputTokens.mean.toFixed(0)} tokens |`);
     lines.push(`| 中位数 | ${results.tokenSpeed.metrics.outputTokens.median.toFixed(0)} tokens |`);
     lines.push('');
+    
+    // 错误统计
+    if (results.tokenSpeed.errors && results.tokenSpeed.errors.total > 0) {
+      lines.push('### ❌ 错误统计');
+      lines.push('');
+      lines.push('| 指标 | 值 |');
+      lines.push('|------|-----|');
+      lines.push(`| 失败请求数 | ${results.tokenSpeed.errors.total}/${results.tokenSpeed.config.samples} |`);
+      lines.push(`| 错误率 | ${results.tokenSpeed.errors.rate}% |`);
+      lines.push(`| 成功请求数 | ${results.tokenSpeed.config.samples - results.tokenSpeed.errors.total} |`);
+      lines.push('');
+      
+      // 错误详情
+      if (results.tokenSpeed.errors.details && results.tokenSpeed.errors.details.length > 0) {
+        lines.push('**错误详情:**');
+        lines.push('');
+        for (const detail of results.tokenSpeed.errors.details.slice(0, 10)) {  // 最多显示10个
+          lines.push(`- 请求 #${detail.requestIndex + 1}: ${detail.error}`);
+        }
+        if (results.tokenSpeed.errors.details.length > 10) {
+          lines.push(`- ... 还有 ${results.tokenSpeed.errors.details.length - 10} 个错误`);
+        }
+        lines.push('');
+      }
+    }
   }
 
   // 性能评估
@@ -224,9 +190,7 @@ async function generateHtmlReport(results, outputDir, baseName) {
     h2 { color: #34495e; margin: 15px 0 10px; font-size: 1.2rem; }
     h3 { color: #7f8c8d; margin: 10px 0 5px; font-size: 1rem; }
     .card { background: white; border-radius: 8px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    .card-concurrency { border-left: 4px solid #3498db; }
     .card-tokenspeed { border-left: 4px solid #27ae60; }
-    .card-concurrency h2 { color: #2980b9; }
     .card-tokenspeed h2 { color: #1e8449; }
     .config-row { display: flex; gap: 20px; margin-bottom: 15px; }
     .config-table { flex: 1; }
@@ -255,7 +219,6 @@ async function generateHtmlReport(results, outputDir, baseName) {
     <h1>🚀 LLM API 性能测试报告</h1>
     <p class="timestamp">测试时间: ${new Date().toLocaleString('zh-CN')}</p>
     
-    ${generateConcurrencyHtml(results)}
     ${generateTokenSpeedHtml(results, chartData)}
     
     <div class="card">
@@ -282,23 +245,28 @@ async function generateHtmlReport(results, outputDir, baseName) {
  */
 function prepareChartData(results) {
   const chartData = {
-    tokenSpeed: null,
-    concurrency: null
+    tokenSpeed: null
   };
 
   // Token速度测试图表数据
   if (results.tokenSpeed && results.tokenSpeed.success) {
     const r = results.tokenSpeed;
     const raw = r.raw || [];
+    const failed = r.failed || [];
     
-    // 计算时间线数据（用于甘特图）
+    // 合并成功和失败的请求，用于甘特图
+    const allRequests = [...raw, ...failed].sort((a, b) =>
+      (a.requestIndex || 0) - (b.requestIndex || 0)
+    );
+    
+    // 计算时间线数据（用于甘特图）- 包含成功和失败的请求
     let timelineData = null;
-    if (raw.length > 0 && raw[0].requestSendTime) {
-      const testStartTime = Math.min(...raw.map(d => d.requestSendTime));
+    if (allRequests.length > 0 && allRequests[0].requestSendTime) {
+      const testStartTime = Math.min(...allRequests.map(d => d.requestSendTime));
       
-      timelineData = raw.map((d, i) => {
+      timelineData = allRequests.map((d, i) => {
         const sendOffset = d.requestSendTime - testStartTime;
-        const receiveOffset = d.responseReceiveTime ? d.responseReceiveTime - testStartTime : sendOffset + d.totalRequestTime;
+        const receiveOffset = d.responseReceiveTime ? d.responseReceiveTime - testStartTime : sendOffset + (d.totalRequestTime || 0);
         const ttft = d.ttft || 0;
         const firstTokenOffset = sendOffset + ttft;
         
@@ -308,9 +276,10 @@ function prepareChartData(results) {
           firstTokenOffset,    // 首Token时间
           receiveOffset,       // 响应完成时间
           ttft: d.ttft,
-          totalRequestTime: d.totalRequestTime,
-          tps: d.tps,
+          totalRequestTime: d.totalRequestTime || 0,
+          tps: d.tps || 0,
           success: d.success,
+          error: d.error || null,  // 错误信息
           inputTokens: d.inputTokens || 0,  // 每个请求的实际输入Token数
           outputTokens: d.outputTokens || 0
         };
@@ -352,30 +321,6 @@ function prepareChartData(results) {
     };
   }
 
-  // 并发测试图表数据
-  if (results.concurrency) {
-    const r = results.concurrency;
-    chartData.concurrency = {
-      latency: {
-        p50: r.metrics.latency.p50,
-        p75: r.metrics.latency.p75,
-        p90: r.metrics.latency.p90,
-        p99: r.metrics.latency.p99
-      },
-      throughput: {
-        rps: r.metrics.throughput.rps,
-        maxRps: r.metrics.throughput.maxRps
-      },
-      errors: {
-        rate: r.metrics.errors.rate,
-        total: r.metrics.errors.total,
-        networkErrors: r.metrics.errors.networkErrors,
-        timeouts: r.metrics.errors.timeouts,
-        httpErrors: r.metrics.errors.httpErrors
-      }
-    };
-  }
-
   return chartData;
 }
 
@@ -404,15 +349,37 @@ function generateChartScripts(chartData) {
       // Chart.js 的 bar chart 默认是垂直的，设置 indexAxis: 'y' 变成水平
       const ttftData = [];   // TTFT阶段数据 [start, end]
       const genData = [];    // Token生成阶段数据 [start, end]
+      const failedData = []; // 失败请求数据 [start, end]
+      
+      // 为每个请求准备数据，区分成功和失败
+      const ttftColors = [];   // TTFT阶段颜色
+      const genColors = [];    // 生成阶段颜色
+      const failedColors = []; // 失败请求颜色
       
       timelineData.forEach((d, idx) => {
         const sendTime = d.sendOffset / 1000;
         const firstTokenTime = d.firstTokenOffset / 1000;
         const receiveTime = d.receiveOffset / 1000;
         
-        // 浮动柱状图需要 [start, end] 格式
-        ttftData.push([sendTime, firstTokenTime]);
-        genData.push([firstTokenTime, receiveTime]);
+        if (d.success === false) {
+          // 失败请求：只显示一个红色条
+          ttftData.push([sendTime, receiveTime]);
+          genData.push([receiveTime, receiveTime]); // 空数据
+          failedData.push([sendTime, receiveTime]);
+          
+          ttftColors.push('rgba(231, 76, 60, 0.8)');  // 红色
+          genColors.push('rgba(231, 76, 60, 0)');
+          failedColors.push('rgba(231, 76, 60, 0.8)');
+        } else {
+          // 成功请求：显示TTFT和生成阶段
+          ttftData.push([sendTime, firstTokenTime]);
+          genData.push([firstTokenTime, receiveTime]);
+          failedData.push([receiveTime, receiveTime]); // 空数据
+          
+          ttftColors.push('rgba(241, 196, 15, 0.8)');  // 黄色
+          genColors.push('rgba(46, 204, 113, 0.8)');   // 绿色
+          failedColors.push('rgba(46, 204, 113, 0)');
+        }
       });
       
       // 请求标签（从请求1开始）
@@ -425,15 +392,22 @@ function generateChartScripts(chartData) {
           datasets: [{
             label: '等待TTFT',
             data: ttftData,
-            backgroundColor: 'rgba(241, 196, 15, 0.8)',
-            borderColor: 'rgba(241, 196, 15, 1)',
+            backgroundColor: ttftColors,
+            borderColor: ttftColors.map(c => c.replace('0.8', '1')),
             borderWidth: 1,
             borderSkipped: false
           }, {
             label: 'Token生成',
             data: genData,
-            backgroundColor: 'rgba(46, 204, 113, 0.8)',
-            borderColor: 'rgba(46, 204, 113, 1)',
+            backgroundColor: genColors,
+            borderColor: genColors.map(c => c.replace('0.8', '1')),
+            borderWidth: 1,
+            borderSkipped: false
+          }, {
+            label: '失败请求',
+            data: failedData,
+            backgroundColor: failedColors,
+            borderColor: failedColors.map(c => c.replace('0.8', '1')),
             borderWidth: 1,
             borderSkipped: false
           }]
@@ -444,6 +418,7 @@ function generateChartScripts(chartData) {
           maintainAspectRatio: false,
           scales: {
             x: {
+              // 不使用stacked，让浮动柱状图独立显示绝对时间位置
               title: { display: true, text: '时间 (秒) - 从测试开始计算' },
               min: 0,
               max: Math.ceil(maxTime),
@@ -452,7 +427,7 @@ function generateChartScripts(chartData) {
               }
             },
             y: {
-              stacked: true,
+              // 不使用stacked，每个请求独立显示
               title: { display: true, text: '请求' },
               grid: {
                 display: true,
@@ -463,12 +438,24 @@ function generateChartScripts(chartData) {
           plugins: {
             legend: {
               display: true,
-              position: 'top'
+              position: 'top',
+              labels: {
+                generateLabels: function(chart) {
+                  return [
+                    { text: '⏳ 等待TTFT', fillStyle: 'rgba(241, 196, 15, 0.8)' },
+                    { text: '🚀 Token生成', fillStyle: 'rgba(46, 204, 113, 0.8)' },
+                    { text: '❌ 失败请求', fillStyle: 'rgba(231, 76, 60, 0.8)' }
+                  ];
+                }
+              }
             },
             tooltip: {
               callbacks: {
                 label: function(context) {
                   const d = timelineData[context.dataIndex];
+                  if (d.success === false) {
+                    return '❌ 失败: ' + (d.error || '未知错误');
+                  }
                   const isTtft = context.datasetIndex === 0;
                   const duration = isTtft
                     ? ((d.ttft || 0) / 1000).toFixed(2) + 's (等待TTFT)'
@@ -613,152 +600,7 @@ function generateChartScripts(chartData) {
     `;
   }
 
-  // 并发测试图表
-  if (chartData.concurrency) {
-    const c = chartData.concurrency;
-    scripts += `
-    // 延迟分布图
-    const latencyCtx = document.getElementById('latencyChart');
-    if (latencyCtx) {
-      new Chart(latencyCtx, {
-        type: 'bar',
-        data: {
-          labels: ['P50', 'P75', 'P90', 'P99'],
-          datasets: [{
-            label: '延迟 (ms)',
-            data: [${c.latency.p50.toFixed(0)}, ${c.latency.p75.toFixed(0)}, ${c.latency.p90.toFixed(0)}, ${c.latency.p99.toFixed(0)}],
-            backgroundColor: [
-              'rgba(46, 204, 113, 0.6)',
-              'rgba(52, 152, 219, 0.6)',
-              'rgba(241, 196, 15, 0.6)',
-              'rgba(231, 76, 60, 0.6)'
-            ],
-            borderColor: [
-              'rgba(46, 204, 113, 1)',
-              'rgba(52, 152, 219, 1)',
-              'rgba(241, 196, 15, 1)',
-              'rgba(231, 76, 60, 1)'
-            ],
-            borderWidth: 1
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            y: { beginAtZero: true, title: { display: true, text: 'ms' } }
-          }
-        }
-      });
-    }
-
-    // 错误分布图
-    const errorCtx = document.getElementById('errorChart');
-    if (errorCtx) {
-      new Chart(errorCtx, {
-        type: 'doughnut',
-        data: {
-          labels: ['网络错误', '超时', 'HTTP错误'],
-          datasets: [{
-            data: [${c.errors.networkErrors}, ${c.errors.timeouts}, ${c.errors.httpErrors}],
-            backgroundColor: [
-              'rgba(231, 76, 60, 0.6)',
-              'rgba(241, 196, 15, 0.6)',
-              'rgba(155, 89, 182, 0.6)'
-            ],
-            borderColor: [
-              'rgba(231, 76, 60, 1)',
-              'rgba(241, 196, 15, 1)',
-              'rgba(155, 89, 182, 1)'
-            ],
-            borderWidth: 1
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false
-        }
-      });
-    }
-    `;
-  }
-
   return scripts;
-}
-
-/**
- * 生成并发测试HTML内容
- * @param {Object} results - 测试结果
- * @returns {string} HTML内容
- */
-function generateConcurrencyHtml(results) {
-  if (!results.concurrency) return '';
-  
-  const r = results.concurrency;
-  return `
-    <div class="card card-concurrency">
-      <h2>📊 并发能力测试</h2>
-      
-      <!-- 指标说明 -->
-      <div class="metric-explanation" style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 12px; line-height: 1.6;">
-        <strong>📖 指标说明：</strong>
-        <span style="margin-left: 8px;">
-          <b>RPS</b> = 每秒请求数 (Requests Per Second)，衡量吞吐量 |
-          <b>P50/P90/P99</b> = 响应时间百分位数，P90表示90%的请求响应时间低于此值 |
-          <b>TTFT</b> = 首Token延迟 (Time To First Token) |
-          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)
-        </span>
-      </div>
-      
-      <div class="config-row">
-        <div class="config-table">
-          <h3>测试配置</h3>
-          <table>
-            <tr><th>参数</th><th>值</th></tr>
-            <tr><td>API URL</td><td>${r.config.url || 'N/A'}</td></tr>
-            <tr><td>模型</td><td>${r.config.model || 'N/A'}</td></tr>
-            <tr><td>并发数</td><td>${r.config.concurrency}</td></tr>
-            <tr><td>持续时间</td><td>${r.config.duration.toFixed(2)}s</td></tr>
-          </table>
-        </div>
-        <div class="config-metrics">
-          <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
-            <div class="metric-card">
-              <div class="metric-value">${r.metrics.throughput.rps.toFixed(1)}</div>
-              <div class="metric-label">平均 RPS</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value">${r.metrics.latency.p90.toFixed(0)}ms</div>
-              <div class="metric-label">P90 响应时间</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value ${r.metrics.errors.rate < 1 ? 'good' : r.metrics.errors.rate < 5 ? 'warning' : 'bad'}">${r.metrics.errors.rate.toFixed(2)}%</div>
-              <div class="metric-label">错误率</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value">${r.metrics.throughput.total}</div>
-              <div class="metric-label">总请求数</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="charts-row">
-        <div class="chart-card">
-          <h3>延迟分布 <span style="font-size: 11px; color: #7f8c8d; font-weight: normal;">(P50=中位数, P99=最慢1%)</span></h3>
-          <div class="chart-container">
-            <canvas id="latencyChart"></canvas>
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3>错误分布</h3>
-          <div class="chart-container">
-            <canvas id="errorChart"></canvas>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 /**
@@ -782,6 +624,15 @@ function generateTokenSpeedHtml(results, chartData) {
   return `
     <div class="card card-tokenspeed">
       <h2>⚡ Token生成速度测试</h2>
+      
+      <!-- 指标说明 -->
+      <div class="metric-explanation" style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 12px; line-height: 1.6;">
+        <strong>📖 指标说明：</strong>
+        <span style="margin-left: 8px;">
+          <b>TTFT</b> = 首Token延迟 (Time To First Token)，从发送请求到收到第一个Token的时间 |
+          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)，衡量生成速度
+        </span>
+      </div>
       
       <div class="config-row">
         <div class="config-table">
@@ -814,6 +665,14 @@ function generateTokenSpeedHtml(results, chartData) {
               <div class="metric-value">${r.metrics.outputTokens.mean.toFixed(0)}</div>
               <div class="metric-label">平均输出Tokens</div>
             </div>
+            <div class="metric-card">
+              <div class="metric-value ${r.errors && r.errors.total === 0 ? 'good' : r.errors && parseFloat(r.errors.rate) < 10 ? 'warning' : 'bad'}">${r.errors ? r.errors.total : 0}</div>
+              <div class="metric-label">失败请求</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value">${r.config.samples - (r.errors ? r.errors.total : 0)}</div>
+              <div class="metric-label">成功请求</div>
+            </div>
           </div>
           <!-- 性能评估放在指标下方 -->
           <div style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #3498db;">
@@ -826,9 +685,9 @@ function generateTokenSpeedHtml(results, chartData) {
       ${hasTimeline ? `
       <h3>📊 请求时间线（甘特图）- 总时长: ${totalTimeStr}</h3>
       <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 5px;">
-        展示每个请求的时间分布：🟡 等待TTFT | 🟢 Token生成
+        展示每个请求的时间分布：🟡 等待TTFT | 🟢 Token生成 | 🔴 失败请求
       </p>
-      <div class="timeline-container" style="height: ${Math.max(200, r.config.samples * 25 + 80)}px;">
+      <div class="timeline-container" style="height: ${Math.max(200, (r.config.samples) * 25 + 80)}px;">
         <canvas id="timelineChart"></canvas>
       </div>
       ` : ''}
@@ -868,37 +727,6 @@ function generateTokenSpeedHtml(results, chartData) {
 function generatePerformanceAssessment(results) {
   const assessments = [];
 
-  if (results.concurrency) {
-    const r = results.concurrency;
-    
-    // 吞吐量评估
-    if (r.metrics.throughput.rps >= 100) {
-      assessments.push('✅ 吞吐量表现优秀，系统具有良好的并发处理能力。');
-    } else if (r.metrics.throughput.rps >= 50) {
-      assessments.push('✓ 吞吐量表现良好，能够满足一般业务需求。');
-    } else {
-      assessments.push('⚠️ 吞吐量较低，建议检查系统瓶颈。');
-    }
-
-    // 响应时间评估
-    if (r.metrics.latency.p90 < 500) {
-      assessments.push('✅ 响应时间优秀，用户体验良好。');
-    } else if (r.metrics.latency.p90 < 1000) {
-      assessments.push('✓ 响应时间可接受，大部分请求能够快速响应。');
-    } else {
-      assessments.push('⚠️ 响应时间较长，可能影响用户体验。');
-    }
-
-    // 错误率评估
-    if (r.metrics.errors.rate < 0.1) {
-      assessments.push('✅ 错误率极低，系统稳定性优秀。');
-    } else if (r.metrics.errors.rate < 1) {
-      assessments.push('✓ 错误率可接受，系统稳定性良好。');
-    } else {
-      assessments.push('⚠️ 错误率偏高，需要排查问题。');
-    }
-  }
-
   if (results.tokenSpeed && results.tokenSpeed.success) {
     const r = results.tokenSpeed;
 
@@ -932,22 +760,6 @@ function generatePerformanceAssessment(results) {
 function generateConclusion(results) {
   const conclusions = [];
 
-  if (results.concurrency) {
-    const r = results.concurrency;
-    const rps = r.metrics.throughput.rps;
-    const latency = r.metrics.latency.p90;
-    const errors = r.metrics.errors.rate;
-    const concurrency = r.config.concurrency;
-
-    if (rps >= 50 && latency < 1000 && errors < 1) {
-      conclusions.push(`并发测试（${concurrency}连接）: 系统性能良好，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。`);
-    } else if (rps >= 20 && latency < 2000 && errors < 5) {
-      conclusions.push(`并发测试（${concurrency}连接）: 系统性能可接受，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。建议优化。`);
-    } else {
-      conclusions.push(`并发测试（${concurrency}连接）: 系统存在性能问题，平均 ${rps.toFixed(1)} RPS，P90延迟 ${latency.toFixed(0)}ms，错误率 ${errors.toFixed(2)}%。需要优化。`);
-    }
-  }
-
   if (results.tokenSpeed && results.tokenSpeed.success) {
     const r = results.tokenSpeed;
     const tps = r.metrics.tps.mean;
@@ -962,21 +774,6 @@ function generateConclusion(results) {
   }
 
   return conclusions.join(' ') || '测试已完成，请查看详细结果。';
-}
-
-/**
- * 格式化延迟时间
- * @param {number} ms - 毫秒数
- * @returns {string} 格式化后的字符串
- */
-function formatLatency(ms) {
-  if (ms < 1000) {
-    return `${ms.toFixed(0)} ms`;
-  } else if (ms < 60000) {
-    return `${(ms / 1000).toFixed(2)} s`;
-  } else {
-    return `${(ms / 60000).toFixed(2)} min`;
-  }
 }
 
 export default {

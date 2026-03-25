@@ -2,7 +2,7 @@
 
 /**
  * LLM API Benchmark Tool
- * API端点并发能力与Token生成速度测试工具
+ * LLM API Token生成速度测试工具
  */
 
 import { program } from 'commander';
@@ -10,7 +10,6 @@ import chalk from 'chalk';
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import path from 'path';
-import { runConcurrencyTest } from './concurrency.js';
 import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
@@ -26,7 +25,7 @@ const SIMPLE_PROMPT = '请写一篇关于人工智能发展历程的文章，包
 
 program
   .name('llm-benchmark')
-  .description('LLM API性能基准测试工具')
+  .description('LLM API Token生成速度测试工具')
   .version('1.0.0');
 
 /**
@@ -98,74 +97,21 @@ function createInputGenerator(sampleCount, sampleFiles) {
   };
 }
 
-// 并发测试命令
+// 默认测试命令 (token-speed 作为默认)
 program
-  .command('concurrency')
-  .description('运行并发能力测试')
-  .option('-c, --concurrency <number>', '并发数', '10')
-  .option('-d, --duration <seconds>', '测试持续时间(秒)', '60')
-  .option('-r, --ramp-up <seconds>', '预热时间(秒)', '10')
-  .option('-u, --url <url>', 'API端点URL')
-  .option('-k, --api-key <key>', 'API密钥')
-  .option('-m, --model <model>', '模型名称')
-  .option('-o, --output <dir>', '输出目录', './results')
-  .action(async (options) => {
-    const url = options.url || process.env.API_BASE_URL;
-    const apiKey = options.apiKey || process.env.API_KEY;
-    const model = options.model || process.env.API_MODEL;
-    
-    // 必填参数检查
-    if (!url) {
-      console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_BASE_URL 或使用 -u 参数'));
-      process.exit(1);
-    }
-    if (!model) {
-      console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_MODEL 或使用 -m 参数'));
-      process.exit(1);
-    }
-    
-    console.log(chalk.blue('🚀 开始并发能力测试...'));
-    console.log(chalk.gray(`模型: ${model}`));
-    try {
-      const results = await runConcurrencyTest({
-        concurrency: safeParseInt(options.concurrency, 10, 'concurrency'),
-        duration: safeParseInt(options.duration, 60, 'duration'),
-        rampUp: safeParseInt(options.rampUp, 10, 'rampUp'),
-        url,
-        apiKey,
-        model,
-        outputDir: options.output
-      });
-      
-      // 为每份报告创建单独的目录
-      const now = new Date();
-      const pad = (n) => n.toString().padStart(2, '0');
-      const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-      const reportDir = `${options.output}/report-${localTimestamp}`;
-      
-      console.log(chalk.green('✅ 测试完成!'));
-      await generateReport({ concurrency: results }, reportDir);
-    } catch (error) {
-      console.error(chalk.red('❌ 测试失败:'), error.message);
-      process.exit(1);
-    }
-  });
-
-// Token速度测试命令
-program
-  .command('token-speed')
-  .description('运行Token生成速度测试')
-  .option('-c, --concurrency <number>', '并发数', '4')
-  .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', '5')
-  .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', '0')
-  .option('-m, --max-output <number>', '最大输出Token数', '30000')
-  .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', 'pipeline')
-  .option('-t, --timeout <seconds>', '请求超时时间(秒)', '90')
+  .command('start', { isDefault: true })
+  .description('运行Token生成速度测试 (默认命令)')
+  .option('-c, --concurrency <number>', '并发数', process.env.DEFAULT_CONCURRENCY || '4')
+  .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', process.env.ROUNDS || '5')
+  .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', process.env.SAMPLE_COUNT || '0')
+  .option('-m, --max-output <number>', '最大输出Token数', process.env.MAX_OUTPUT_TOKENS || '30000')
+  .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', process.env.CONCURRENCY_MODE || 'pipeline')
+  .option('-t, --timeout <seconds>', '请求超时时间(秒)', process.env.DEFAULT_TIMEOUT ? String(parseInt(process.env.DEFAULT_TIMEOUT) / 1000) : '90')
   .option('-u, --url <url>', 'API端点URL')
   .option('-k, --api-key <key>', 'API密钥')
   .option('--model <model>', '模型名称')
   .option('--system-prompt <prompt>', '系统提示词')
-  .option('-o, --output <dir>', '输出目录', './results')
+  .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .action(async (options) => {
     const url = options.url || process.env.API_BASE_URL;
     const apiKey = options.apiKey || process.env.API_KEY;
@@ -284,144 +230,6 @@ program
       
       await generateReport({ tokenSpeed: results }, reportDir);
       console.log(chalk.green('✅ 测试完成!'));
-    } catch (error) {
-      console.error(chalk.red('❌ 测试失败:'), error.message);
-      process.exit(1);
-    }
-  });
-
-// 完整测试命令
-program
-  .command('all')
-  .description('运行所有测试')
-  .option('-o, --output <dir>', '输出目录', './results')
-  .option('-m, --model <model>', '模型名称')
-  // 并发测试参数
-  .option('--concurrency-concurrency <number>', '并发测试: 并发连接数', '10')
-  .option('--concurrency-duration <seconds>', '并发测试: 持续时间(秒)', '60')
-  .option('--concurrency-rampup <seconds>', '并发测试: 预热时间(秒)', '10')
-  // Token速度测试参数
-  .option('--token-concurrency <number>', 'Token测试: 并发数', '4')
-  .option('--token-rounds <number>', 'Token测试: 采样轮数', '5')
-  .option('--token-sample-count <number>', 'Token测试: 每次请求随机抽取的样本数量', '0')
-  .option('--token-max-output <number>', 'Token测试: 最大输出Token数', '30000')
-  .option('--token-mode <mode>', 'Token测试: 并发模式 (batch/pipeline)', 'pipeline')
-  .option('--token-timeout <seconds>', 'Token测试: 请求超时时间(秒)', '90')
-  .action(async (options) => {
-    const url = process.env.API_BASE_URL;
-    const apiKey = process.env.API_KEY;
-    const model = options.model || process.env.API_MODEL;
-    
-    // 必填参数检查
-    if (!url) {
-      console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_BASE_URL'));
-      process.exit(1);
-    }
-    if (!model) {
-      console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_MODEL 或使用 -m 参数'));
-      process.exit(1);
-    }
-    
-    // 解析参数
-    const concurrencyConcurrency = safeParseInt(options.concurrencyConcurrency, 10, 'concurrencyConcurrency');
-    const concurrencyDuration = safeParseInt(options.concurrencyDuration, 60, 'concurrencyDuration');
-    const concurrencyRampup = safeParseInt(options.concurrencyRampup, 10, 'concurrencyRampup');
-    
-    const tokenConcurrency = safeParseInt(options.tokenConcurrency, 4, 'tokenConcurrency');
-    const tokenRounds = safeParseInt(options.tokenRounds, 5, 'tokenRounds');
-    const tokenSampleCount = safeParseInt(options.tokenSampleCount, 0, 'tokenSampleCount');
-    const tokenMaxOutput = safeParseInt(options.tokenMaxOutput, 30000, 'tokenMaxOutput');
-    const tokenTimeout = safeParseInt(options.tokenTimeout, 90, 'tokenTimeout') * 1000;
-    const tokenMode = options.tokenMode;
-    const tokenSamples = tokenConcurrency * tokenRounds;
-    
-    // 验证并发模式
-    if (!['batch', 'pipeline'].includes(tokenMode)) {
-      console.warn(chalk.yellow(`⚠️ 无效的并发模式 "${tokenMode}"，使用默认值 "pipeline"`));
-    }
-    
-    console.log(chalk.blue('🔬 开始完整性能测试...'));
-    console.log(chalk.gray(`模型: ${model}`));
-    
-    // 扫描样本文件（用于Token测试）
-    let sampleFiles = [];
-    if (tokenSampleCount > 0) {
-      try {
-        const dataDir = path.join(process.cwd(), 'data');
-        sampleFiles = await scanSampleFiles(dataDir);
-        sampleFiles = sampleFiles.filter(f => {
-          const name = path.basename(f);
-          return name.includes('-8k') ||
-                 name.includes('-16k') ||
-                 name.startsWith('sample-') ||
-                 name.startsWith('novel-') ||
-                 name.startsWith('tech-news-') ||
-                 name.startsWith('conversation-') ||
-                 name.startsWith('code-samples-') ||
-                 name.startsWith('multimodal-');
-        });
-        
-        if (sampleFiles.length === 0) {
-          console.error(chalk.red('❌ 没有找到样本文件'));
-          process.exit(1);
-        }
-        console.log(chalk.gray(`📚 找到 ${sampleFiles.length} 个样本文件`));
-      } catch (error) {
-        console.error(chalk.red(`❌ 无法读取样本目录: ${error.message}`));
-        process.exit(1);
-      }
-    }
-    
-    // 创建输入生成器
-    const generateInputText = createInputGenerator(tokenSampleCount, sampleFiles);
-    
-    try {
-      // 并发测试
-      console.log(chalk.cyan('\n📊 阶段1: 并发能力测试'));
-      console.log(`  并发数: ${concurrencyConcurrency}, 持续时间: ${concurrencyDuration}s, 预热: ${concurrencyRampup}s`);
-      const concurrencyResults = await runConcurrencyTest({
-        concurrency: concurrencyConcurrency,
-        duration: concurrencyDuration,
-        rampUp: concurrencyRampup,
-        url,
-        apiKey,
-        model,
-        outputDir: options.output
-      });
-
-      // Token速度测试
-      console.log(chalk.cyan('\n📊 阶段2: Token生成速度测试'));
-      console.log(`  并发数: ${tokenConcurrency}, 轮数: ${tokenRounds}, 总采样: ${tokenSamples}`);
-      console.log(`  最大输出: ${tokenMaxOutput} tokens, 超时: ${tokenTimeout / 1000}s, 模式: ${tokenMode}`);
-      
-      const tokenSpeedResults = await runLlmBenchmarkTest({
-        url,
-        apiKey,
-        model,
-        maxOutputTokens: tokenMaxOutput,
-        concurrency: tokenConcurrency,
-        concurrencyMode: tokenMode,
-        samples: tokenSamples,
-        sampleCount: tokenSampleCount,
-        generateInputText,
-        timeout: tokenTimeout
-      });
-
-      // 生成综合报告
-      console.log(chalk.cyan('\n📊 生成测试报告...'));
-      
-      // 为每份报告创建单独的目录
-      const now = new Date();
-      const pad = (n) => n.toString().padStart(2, '0');
-      const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-      const reportDir = `${options.output}/report-${localTimestamp}`;
-      
-      await generateReport({
-        concurrency: concurrencyResults,
-        tokenSpeed: tokenSpeedResults
-      }, reportDir);
-
-      console.log(chalk.green('✅ 所有测试完成!'));
     } catch (error) {
       console.error(chalk.red('❌ 测试失败:'), error.message);
       process.exit(1);

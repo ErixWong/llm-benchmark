@@ -413,14 +413,15 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
 
   // 构建请求头，仅在apiKey存在时添加Authorization
   const headers = {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'User-Agent': process.env.USER_AGENT || 'Kilo-Code/5.10.4'
   };
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
   try {
-    // 构造请求 - 使用流式响应
+    // 构造请求 - 使用流式响应，不使用agent避免循环引用问题
     const response = await axios({
       method: 'POST',
       url: url,
@@ -478,9 +479,11 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
         const ttft = firstTokenTime ? firstTokenTime - requestStart : null;
         // 使用tokenizer精确计算输出token数量
         const outputTokens = countMessagesTokens([{ role: 'assistant', content: outputText }]);
+        // 计算输入token数量
+        const inputTokensActual = countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
-        const tps = outputTokens > 0 && generationTime > 0 
-          ? (outputTokens / (generationTime / 1000)).toFixed(2) 
+        const tps = outputTokens > 0 && generationTime > 0
+          ? (outputTokens / (generationTime / 1000)).toFixed(2)
           : 0;
 
         resolve({
@@ -488,6 +491,7 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
           totalRequestTime,
           ttft,
           outputTokens,
+          inputTokens: inputTokensActual,
           generationTime,
           tps: parseFloat(tps),
           outputText
@@ -499,6 +503,34 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
       });
     });
   } catch (error) {
+    // 输出详细错误信息用于调试
+    if (error.response) {
+      let errorDetail = '';
+      try {
+        const errorData = error.response.data;
+        if (typeof errorData === 'object' && errorData !== null) {
+          // 安全地序列化错误数据，避免循环引用
+          const safeErrorData = {};
+          for (const key of Object.keys(errorData)) {
+            const value = errorData[key];
+            if (typeof value === 'object' && value !== null) {
+              safeErrorData[key] = '[Object]';
+            } else {
+              safeErrorData[key] = value;
+            }
+          }
+          errorDetail = JSON.stringify(safeErrorData, null, 2);
+        } else if (typeof errorData === 'string') {
+          errorDetail = errorData;
+        } else {
+          errorDetail = error.message || 'Unknown error';
+        }
+      } catch (e) {
+        errorDetail = error.message || 'Failed to serialize error data';
+      }
+      console.log(chalk.red(`\n  详细错误: HTTP ${error.response.status}`));
+      console.log(chalk.red(`  响应数据: ${errorDetail.substring(0, 500)}`));
+    }
     // 如果流式请求失败，尝试非流式请求
     return await measureTokenSpeedNonStreaming(url, apiKey, model, messages, maxOutputTokens, timeout);
   }
@@ -518,7 +550,8 @@ async function measureTokenSpeedNonStreaming(url, apiKey, model, messages, maxOu
 
   // 构建请求头，仅在apiKey存在时添加Authorization
   const headers = {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'User-Agent': process.env.USER_AGENT || 'Kilo-Code/5.10.4'
   };
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
@@ -632,9 +665,14 @@ function processTokenSpeedResult(results, config) {
     },
     errors: {
       total: failedResults.length,
-      rate: (failedResults.length / results.length * 100).toFixed(2)
+      rate: (failedResults.length / results.length * 100).toFixed(2),
+      details: failedResults.map(r => ({
+        requestIndex: r.requestIndex,
+        error: r.error
+      }))
     },
-    raw: successResults
+    raw: successResults,
+    failed: failedResults  // 保存失败请求的原始数据
   };
 }
 
