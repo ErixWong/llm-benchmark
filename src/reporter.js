@@ -395,21 +395,27 @@ function generateChartScripts(chartData) {
             backgroundColor: ttftColors,
             borderColor: ttftColors.map(c => c.replace('0.8', '1')),
             borderWidth: 1,
-            borderSkipped: false
+            borderSkipped: false,
+            barPercentage: 0.7,
+            categoryPercentage: 0.8
           }, {
             label: 'Token生成',
             data: genData,
             backgroundColor: genColors,
             borderColor: genColors.map(c => c.replace('0.8', '1')),
             borderWidth: 1,
-            borderSkipped: false
+            borderSkipped: false,
+            barPercentage: 0.7,
+            categoryPercentage: 0.8
           }, {
             label: '失败请求',
             data: failedData,
             backgroundColor: failedColors,
             borderColor: failedColors.map(c => c.replace('0.8', '1')),
             borderWidth: 1,
-            borderSkipped: false
+            borderSkipped: false,
+            barPercentage: 0.7,
+            categoryPercentage: 0.8
           }]
         },
         options: {
@@ -418,7 +424,6 @@ function generateChartScripts(chartData) {
           maintainAspectRatio: false,
           scales: {
             x: {
-              // 不使用stacked，让浮动柱状图独立显示绝对时间位置
               title: { display: true, text: '时间 (秒) - 从测试开始计算' },
               min: 0,
               max: Math.ceil(maxTime),
@@ -427,7 +432,7 @@ function generateChartScripts(chartData) {
               }
             },
             y: {
-              // 不使用stacked，每个请求独立显示
+              stacked: true,  // 关键：启用堆叠让TTFT和生成阶段在同一行
               title: { display: true, text: '请求' },
               grid: {
                 display: true,
@@ -440,11 +445,13 @@ function generateChartScripts(chartData) {
               display: true,
               position: 'top',
               labels: {
+                usePointStyle: true,
+                padding: 15,
                 generateLabels: function(chart) {
                   return [
-                    { text: '⏳ 等待TTFT', fillStyle: 'rgba(241, 196, 15, 0.8)' },
-                    { text: '🚀 Token生成', fillStyle: 'rgba(46, 204, 113, 0.8)' },
-                    { text: '❌ 失败请求', fillStyle: 'rgba(231, 76, 60, 0.8)' }
+                    { text: '⏳ 等待TTFT', fillStyle: 'rgba(241, 196, 15, 0.8)', strokeStyle: 'rgba(241, 196, 15, 1)', lineWidth: 1 },
+                    { text: '🚀 Token生成', fillStyle: 'rgba(46, 204, 113, 0.8)', strokeStyle: 'rgba(46, 204, 113, 1)', lineWidth: 1 },
+                    { text: '❌ 失败请求', fillStyle: 'rgba(231, 76, 60, 0.8)', strokeStyle: 'rgba(231, 76, 60, 1)', lineWidth: 1 }
                   ];
                 }
               }

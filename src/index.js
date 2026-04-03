@@ -222,6 +222,12 @@ program
         timeout
       });
       
+      // 检查测试是否成功
+      if (!results.success) {
+        console.error(chalk.red('❌ 测试失败:'), results.error || '所有请求均失败');
+        process.exit(1);
+      }
+      
       // 为每份报告创建单独的目录
       const now = new Date();
       const pad = (n) => n.toString().padStart(2, '0');
