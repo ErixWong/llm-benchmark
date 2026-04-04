@@ -183,6 +183,9 @@ program
       }
     }
     
+    // 获取报告标题
+    const reportTitle = process.env.REPORT_TITLE || model;
+    
     // 创建输入生成器
     const generateInputText = createInputGenerator(sampleCount, sampleFiles);
     
@@ -233,6 +236,9 @@ program
       const pad = (n) => n.toString().padStart(2, '0');
       const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
       const reportDir = `${options.output}/report-${localTimestamp}`;
+      
+      // 添加报告标题到结果中
+      results.reportTitle = reportTitle;
       
       await generateReport({ tokenSpeed: results }, reportDir);
       console.log(chalk.green('✅ 测试完成!'));
