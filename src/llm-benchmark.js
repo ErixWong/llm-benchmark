@@ -153,12 +153,13 @@ export async function runLlmBenchmarkTest(options) {
         }
         await measureTokenSpeed(normalizedUrl, apiKey, model, warmupMessages, maxOutputTokens, timeout);
       } catch (error) {
-        // 检查是否是503错误，如果是则停止测试
-        if (error.response && error.response.status === 503) {
-          warmupSpinner.fail('预热失败: API服务不可用 (HTTP 503)');
-          throw new Error('预热失败: API服务不可用，请检查API服务器状态');
+        // 检查是否是HTTP错误（4xx/5xx），如果是则停止测试
+        if (error.response && error.response.status >= 400) {
+          const statusCode = error.response.status;
+          warmupSpinner.fail(`预热失败: API错误 (HTTP ${statusCode})`);
+          throw new Error(`预热失败: API返回错误状态码 ${statusCode}，请检查API服务器状态`);
         }
-        // 其他错误忽略
+        // 其他错误（如网络错误）忽略
       }
     }
     warmupSpinner.succeed('预热完成');
