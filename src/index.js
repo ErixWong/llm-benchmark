@@ -2,7 +2,7 @@
 
 /**
  * LLM API Benchmark Tool
- * API端点并发能力与Token生成速度测试工具
+ * LLM API Token生成速度测试工具
  */
 
 import { program } from 'commander';
@@ -10,7 +10,6 @@ import chalk from 'chalk';
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import path from 'path';
-import { runConcurrencyTest } from './concurrency.js';
 import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
@@ -26,7 +25,7 @@ const SIMPLE_PROMPT = '请写一篇关于人工智能发展历程的文章，包
 
 program
   .name('llm-benchmark')
-  .description('LLM API性能基准测试工具')
+  .description('LLM API Token生成速度测试工具')
   .version('1.0.0');
 
 /**
@@ -98,63 +97,37 @@ function createInputGenerator(sampleCount, sampleFiles) {
   };
 }
 
-// 并发测试命令
+// 默认测试命令 (token-speed 作为默认)
 program
-  .command('concurrency')
-  .description('运行并发能力测试')
-  .option('-c, --concurrency <number>', '并发数', '10')
-  .option('-d, --duration <seconds>', '测试持续时间(秒)', '60')
-  .option('-r, --ramp-up <seconds>', '预热时间(秒)', '10')
+  .command('start', { isDefault: true })
+  .description('运行Token生成速度测试 (默认命令)')
+  .option('-c, --concurrency <number>', '并发数', process.env.DEFAULT_CONCURRENCY || '4')
+  .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', process.env.ROUNDS || '5')
+  .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', process.env.SAMPLE_COUNT || '0')
+  .option('-m, --max-output <number>', '最大输出Token数', process.env.MAX_OUTPUT_TOKENS || '30000')
+  .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', process.env.CONCURRENCY_MODE || 'pipeline')
+  .option('-t, --timeout <seconds>', '请求超时时间(秒)', process.env.DEFAULT_TIMEOUT ? String(parseInt(process.env.DEFAULT_TIMEOUT) / 1000) : '90')
   .option('-u, --url <url>', 'API端点URL')
   .option('-k, --api-key <key>', 'API密钥')
-  .option('-m, --model <model>', '模型名称', process.env.API_MODEL || 'gpt-3.5-turbo')
-  .option('-o, --output <dir>', '输出目录', './results')
-  .action(async (options) => {
-    console.log(chalk.blue('🚀 开始并发能力测试...'));
-    console.log(chalk.gray(`模型: ${options.model}`));
-    try {
-      const results = await runConcurrencyTest({
-        concurrency: safeParseInt(options.concurrency, 10, 'concurrency'),
-        duration: safeParseInt(options.duration, 60, 'duration'),
-        rampUp: safeParseInt(options.rampUp, 10, 'rampUp'),
-        url: options.url || process.env.API_BASE_URL,
-        apiKey: options.apiKey || process.env.API_KEY,
-        model: options.model,
-        outputDir: options.output
-      });
-      console.log(chalk.green('✅ 测试完成!'));
-      await generateReport(results, options.output);
-    } catch (error) {
-      console.error(chalk.red('❌ 测试失败:'), error.message);
-      process.exit(1);
-    }
-  });
-
-// Token速度测试命令
-program
-  .command('token-speed')
-  .description('运行Token生成速度测试')
-  .option('-c, --concurrency <number>', '并发数', '4')
-  .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', '5')
-  .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', '0')
-  .option('-m, --max-output <number>', '最大输出Token数', '30000')
-  .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', 'pipeline')
-  .option('-t, --timeout <seconds>', '请求超时时间(秒)', '90')
-  .option('-u, --url <url>', 'API端点URL')
-  .option('-k, --api-key <key>', 'API密钥')
-  .option('--model <model>', '模型名称', process.env.API_MODEL || 'gpt-3.5-turbo')
+  .option('--model <model>', '模型名称')
   .option('--system-prompt <prompt>', '系统提示词')
-  .option('-o, --output <dir>', '输出目录', './results')
+  .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .action(async (options) => {
-    console.log(chalk.blue('⚡ 开始Token生成速度测试...'));
-    
     const url = options.url || process.env.API_BASE_URL;
     const apiKey = options.apiKey || process.env.API_KEY;
+    const model = options.model || process.env.API_MODEL;
     
+    // 必填参数检查
     if (!url) {
       console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_BASE_URL 或使用 -u 参数'));
       process.exit(1);
     }
+    if (!model) {
+      console.error(chalk.red('❌ 错误: 请在 .env 文件中配置 API_MODEL 或使用 --model 参数'));
+      process.exit(1);
+    }
+    
+    console.log(chalk.blue('⚡ 开始Token生成速度测试...'));
     
     const concurrency = safeParseInt(options.concurrency, 4, 'concurrency');
     const rounds = safeParseInt(options.rounds, 5, 'rounds');
@@ -210,14 +183,15 @@ program
       }
     }
     
+    // 获取报告标题
+    const reportTitle = process.env.REPORT_TITLE || model;
+    
     // 创建输入生成器
     const generateInputText = createInputGenerator(sampleCount, sampleFiles);
     
     // 预估 token 数
     const sampleInput = await generateInputText();
     const estimatedTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
-    
-    const model = options.model;
     
     console.log(chalk.gray(`模型: ${model}`));
     console.log('测试参数:');
@@ -251,52 +225,23 @@ program
         timeout
       });
       
+      // 检查测试是否成功
+      if (!results.success) {
+        console.error(chalk.red('❌ 测试失败:'), results.error || '所有请求均失败');
+        process.exit(1);
+      }
+      
       // 为每份报告创建单独的目录
       const now = new Date();
       const pad = (n) => n.toString().padStart(2, '0');
       const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
       const reportDir = `${options.output}/report-${localTimestamp}`;
       
+      // 添加报告标题到结果中
+      results.reportTitle = reportTitle;
+      
       await generateReport({ tokenSpeed: results }, reportDir);
       console.log(chalk.green('✅ 测试完成!'));
-    } catch (error) {
-      console.error(chalk.red('❌ 测试失败:'), error.message);
-      process.exit(1);
-    }
-  });
-
-// 完整测试命令
-program
-  .command('all')
-  .description('运行所有测试')
-  .option('-o, --output <dir>', '输出目录', './results')
-  .action(async (options) => {
-    console.log(chalk.blue('🔬 开始完整性能测试...'));
-    try {
-      // 并发测试
-      console.log(chalk.cyan('\n📊 阶段1: 并发能力测试'));
-      const concurrencyResults = await runConcurrencyTest({
-        url: process.env.API_BASE_URL,
-        apiKey: process.env.API_KEY,
-        outputDir: options.output
-      });
-
-      // Token速度测试
-      console.log(chalk.cyan('\n📊 阶段2: Token生成速度测试'));
-      const tokenSpeedResults = await runLlmBenchmarkTest({
-        url: process.env.API_BASE_URL,
-        apiKey: process.env.API_KEY,
-        outputDir: options.output
-      });
-
-      // 生成综合报告
-      console.log(chalk.cyan('\n📊 生成测试报告...'));
-      await generateReport({
-        concurrency: concurrencyResults,
-        tokenSpeed: tokenSpeedResults
-      }, options.output);
-
-      console.log(chalk.green('✅ 所有测试完成!'));
     } catch (error) {
       console.error(chalk.red('❌ 测试失败:'), error.message);
       process.exit(1);

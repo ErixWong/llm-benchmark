@@ -63,22 +63,25 @@ export function getStatusCategory(statusCode) {
   return 'unknown';
 }
 
-// 创建支持Keep-Alive的Agent（使用环境变量配置）
-const httpAgent = new HttpAgent({
-  keepAlive: true,
-  maxSockets: 100,
-  maxFreeSockets: 10,
-  timeout: DEFAULT_TIMEOUT, // Active socket timeout
-  freeSocketTimeout: 30000 // Free socket timeout
-});
-
-const httpsAgent = new HttpsAgent({
-  keepAlive: true,
-  maxSockets: 100,
-  maxFreeSockets: 10,
-  timeout: DEFAULT_TIMEOUT,
-  freeSocketTimeout: 30000
-});
+// Agent创建函数 - 按需创建避免模块加载时的循环引用问题
+function createAgents(timeout) {
+  return {
+    httpAgent: new HttpAgent({
+      keepAlive: true,
+      maxSockets: 100,
+      maxFreeSockets: 10,
+      timeout: timeout,
+      freeSocketTimeout: 30000
+    }),
+    httpsAgent: new HttpsAgent({
+      keepAlive: true,
+      maxSockets: 100,
+      maxFreeSockets: 10,
+      timeout: timeout,
+      freeSocketTimeout: 30000
+    })
+  };
+}
 
 // 导出默认超时时间供其他模块使用
 export { DEFAULT_TIMEOUT };
@@ -104,7 +107,8 @@ export function createHttpClient(options = {}) {
     baseURL = '',
     timeout = DEFAULT_TIMEOUT,  // 使用环境变量配置的默认超时
     headers = {},
-    retryConfig = {}
+    retryConfig = {},
+    useKeepAlive = true  // 是否使用Keep-Alive
   } = options;
 
   // 自动规范化URL
@@ -116,15 +120,18 @@ export function createHttpClient(options = {}) {
 
   const finalRetryConfig = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
 
+  // 按需创建Agent
+  const agents = useKeepAlive ? createAgents(timeout) : {};
+
   const client = axios.create({
     baseURL,
     timeout,
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': process.env.USER_AGENT || 'Kilo-Code/5.10.4',
       ...headers
     },
-    httpAgent,
-    httpsAgent
+    ...agents
   });
 
   // 请求拦截器
