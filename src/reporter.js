@@ -646,6 +646,7 @@ function generateTokenSpeedHtml(results, chartData) {
           <table>
             <tr><th>参数</th><th>值</th></tr>
             ${r.reportTitle ? `<tr><td><strong>测试标题</strong></td><td><strong>${r.reportTitle}</strong></td></tr>` : ''}
+            <tr><td>API URL</td><td>${r.config.url || 'N/A'}</td></tr>
             <tr><td>模型</td><td>${r.config.model || 'N/A'}</td></tr>
             ${r.config.sampleCount > 0 ? `<tr><td>Sample数量</td><td>${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
             <tr><td>最大输出Token数</td><td>${r.config.maxOutputTokens}</td></tr>

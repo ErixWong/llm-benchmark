@@ -385,6 +385,7 @@ export async function runLlmBenchmarkTest(options) {
   // 处理结果
   const processedResult = processTokenSpeedResult(results, {
     model,  // 添加模型名称
+    url,    // 添加API URL
     inputTokens: actualTokens,  // 使用实际计算的token数
     inputTextUsed: !!(inputText || inputTexts),  // 标记是否使用了输入文本
     maxOutputTokens,
