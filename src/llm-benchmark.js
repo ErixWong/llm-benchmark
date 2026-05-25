@@ -3,7 +3,6 @@
  * 测试LLM API的Token生成效率、并发能力等性能指标
  */
 
-import axios from 'axios';
 import chalk from 'chalk';
 import ora from 'ora';
 import { generateContext, countMessagesTokens, validateContext } from './context-generator.js';
@@ -31,8 +30,12 @@ export async function runLlmBenchmarkTest(options) {
     contextRounds = 0,
     warmupRequests = 1,
     sampleCount = 0,  // 选取多少个8k sample组成上下文
-    timeout = DEFAULT_TIMEOUT  // 请求超时时间（毫秒）
+    timeout = DEFAULT_TIMEOUT,  // 请求超时时间（毫秒）
+    quiet = false  // 静默模式
   } = options;
+
+  // 统一获取 User-Agent
+  const userAgent = process.env.USER_AGENT || 'llm-benchmark/1.0.0';
 
   // 必填参数检查
   if (!url) {
@@ -56,7 +59,10 @@ export async function runLlmBenchmarkTest(options) {
   const httpClient = createHttpClient({
     baseURL: url, // createHttpClient会自动规范化
     timeout: timeout,  // 使用传入的超时参数
-    headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}
+    headers: {
+      'User-Agent': userAgent,
+      ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
+    }
   });
 
   // 生成上下文 - 支持多种输入方式
@@ -151,7 +157,7 @@ export async function runLlmBenchmarkTest(options) {
         } else {
           warmupMessages = contextMessagesList[0];
         }
-        await measureTokenSpeed(normalizedUrl, apiKey, model, warmupMessages, maxOutputTokens, timeout);
+        await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens);
       } catch (error) {
         // 检查是否是HTTP错误（4xx/5xx），如果是则停止测试
         if (error.response && error.response.status >= 400) {
@@ -181,29 +187,22 @@ export async function runLlmBenchmarkTest(options) {
   const testStartTime = Date.now();
 
   if (concurrency > 1 && concurrencyMode === 'pipeline') {
-    // 流水线模式：一个请求完成后立即开始下一个
+    // 流水线模式：使用更优雅的并发控制，避免 Promise.race 内存问题
     let completed = 0;
     let nextIndex = 0;
-    const activeRequests = new Set();
+    const activePromises = new Map(); // 使用 Map 存储活跃请求
     
     const runRequest = async (requestIndex) => {
       const requestSendTime = Date.now();
       const messages = await getMessagesForRequest(requestIndex);
       
       try {
-        const result = await measureTokenSpeed(normalizedUrl, apiKey, model, messages, maxOutputTokens, timeout);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
         completed++;
         spinner.text = `执行Token速度测试 (${completed}/${samples})`;
         
         // 每次请求完成后输出详细信息
-        console.log(chalk.gray(`\n[${completed}/${samples}] 请求 #${requestIndex + 1} 完成:`));
-        if (result.success !== false) {
-          console.log(`  TPS: ${chalk.green(result.tps.toFixed(2))} tokens/s`);
-          console.log(`  TTFT: ${result.ttft ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
-          console.log(`  输出Token: ${result.outputTokens} tokens`);
-          console.log(`  生成时间: ${result.generationTime ? (result.generationTime / 1000).toFixed(2) + ' s' : 'N/A'}`);
-          console.log(`  总请求时间: ${result.totalRequestTime} ms`);
-        }
+        logRequestCompletion(completed, samples, result, false, requestIndex + 1);
         
         return {
           ...result,
@@ -216,8 +215,7 @@ export async function runLlmBenchmarkTest(options) {
         spinner.text = `执行Token速度测试 (${completed}/${samples})`;
         
         // 输出错误信息
-        console.log(chalk.gray(`\n[${completed}/${samples}] 请求 #${requestIndex + 1} 失败:`));
-        console.log(chalk.red(`  错误: ${error.message}`));
+        logRequestCompletion(completed, samples, { error: error.message }, true, requestIndex + 1);
         
         return {
           success: false,
@@ -229,51 +227,35 @@ export async function runLlmBenchmarkTest(options) {
       }
     };
     
-    // 初始启动concurrency个请求
-    const initialPromises = [];
+    // 初始启动 concurrency 个请求
     for (let i = 0; i < Math.min(concurrency, samples); i++) {
-      activeRequests.add(i);
-      initialPromises.push(
-        runRequest(i).then(result => {
-          activeRequests.delete(i);
-          return result;
-        })
-      );
+      const promise = runRequest(i);
+      activePromises.set(i, promise);
+      nextIndex++;
     }
-    nextIndex = Math.min(concurrency, samples);
     
-    // 等待所有请求完成，每完成一个就启动下一个
-    const pendingPromises = [...initialPromises];
-    
+    // 使用迭代方式处理完成的请求，避免 Promise.race 的内存问题
     while (completed < samples) {
-      // 使用Promise.race等待任意一个完成
-      const completedPromise = await Promise.race(
-        pendingPromises.map(p => p.then(result => ({ result, promise: p })))
+      // 等待任意一个活跃请求完成
+      const [completedIndex, completedResult] = await Promise.race(
+        Array.from(activePromises.entries()).map(([idx, promise]) => 
+          promise.then(result => [idx, result])
+        )
       );
       
-      results.push(completedPromise.result);
+      // 保存结果
+      results.push(completedResult);
       
-      // 从pending中移除已完成的
-      const idx = pendingPromises.indexOf(completedPromise.promise);
-      if (idx > -1) {
-        pendingPromises.splice(idx, 1);
-      }
+      // 从活跃请求中移除已完成的
+      activePromises.delete(completedIndex);
       
       // 如果还有更多请求要发，启动下一个
       if (nextIndex < samples) {
-        const newIndex = nextIndex++;
-        activeRequests.add(newIndex);
-        const newPromise = runRequest(newIndex).then(result => {
-          activeRequests.delete(newIndex);
-          return result;
-        });
-        pendingPromises.push(newPromise);
+        const newPromise = runRequest(nextIndex);
+        activePromises.set(nextIndex, newPromise);
+        nextIndex++;
       }
     }
-    
-    // 等待所有剩余的promise完成
-    const remainingResults = await Promise.all(pendingPromises);
-    results.push(...remainingResults);
     
   } else if (concurrency > 1) {
     // 批次模式：等待整个批次完成后才开始下一批
@@ -294,19 +276,11 @@ export async function runLlmBenchmarkTest(options) {
           (async () => {
             const messages = await getMessagesForRequest(currentRequestIndex);
             try {
-              const result = await measureTokenSpeed(normalizedUrl, apiKey, model, messages, maxOutputTokens, timeout);
+              const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
-              // 每次请求完成后输出详细信息
-              console.log(chalk.gray(`\n[${completed}/${samples}] 请求 #${currentRequestIndex + 1} 完成:`));
-              if (result.success !== false) {
-                console.log(`  TPS: ${chalk.green(result.tps.toFixed(2))} tokens/s`);
-                console.log(`  TTFT: ${result.ttft ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
-                console.log(`  输出Token: ${result.outputTokens} tokens`);
-                console.log(`  生成时间: ${result.generationTime ? (result.generationTime / 1000).toFixed(2) + ' s' : 'N/A'}`);
-                console.log(`  总请求时间: ${result.totalRequestTime} ms`);
-              }
+              logRequestCompletion(completed, samples, result, false, currentRequestIndex + 1);
               
               return {
                 ...result,
@@ -318,9 +292,7 @@ export async function runLlmBenchmarkTest(options) {
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
-              // 输出错误信息
-              console.log(chalk.gray(`\n[${completed}/${samples}] 请求 #${currentRequestIndex + 1} 失败:`));
-              console.log(chalk.red(`  错误: ${error.message}`));
+              logRequestCompletion(completed, samples, { error: error.message }, true, currentRequestIndex + 1);
               
               return {
                 success: false,
@@ -345,17 +317,9 @@ export async function runLlmBenchmarkTest(options) {
       const messages = await getMessagesForRequest(i);
       
       try {
-        const result = await measureTokenSpeed(normalizedUrl, apiKey, model, messages, maxOutputTokens, timeout);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
         
-        // 每次请求完成后输出详细信息
-        console.log(chalk.gray(`\n[${i + 1}/${samples}] 请求 #${i + 1} 完成:`));
-        if (result.success !== false) {
-          console.log(`  TPS: ${chalk.green(result.tps.toFixed(2))} tokens/s`);
-          console.log(`  TTFT: ${result.ttft ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
-          console.log(`  输出Token: ${result.outputTokens} tokens`);
-          console.log(`  生成时间: ${result.generationTime ? (result.generationTime / 1000).toFixed(2) + ' s' : 'N/A'}`);
-          console.log(`  总请求时间: ${result.totalRequestTime} ms`);
-        }
+        logRequestCompletion(i + 1, samples, result, false, i + 1);
         
         results.push({
           ...result,
@@ -364,9 +328,7 @@ export async function runLlmBenchmarkTest(options) {
           responseReceiveTime: Date.now()
         });
       } catch (error) {
-        // 输出错误信息
-        console.log(chalk.gray(`\n[${i + 1}/${samples}] 请求 #${i + 1} 失败:`));
-        console.log(chalk.red(`  错误: ${error.message}`));
+        logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1);
         
         results.push({
           success: false,
@@ -404,47 +366,58 @@ export async function runLlmBenchmarkTest(options) {
 }
 
 /**
+ * 打印请求完成日志
+ * @param {number} current - 当前完成数
+ * @param {number} total - 总数
+ * @param {Object} result - 请求结果
+ * @param {boolean} isError - 是否错误
+ * @param {number} requestNum - 请求编号
+ */
+function logRequestCompletion(current, total, result, isError = false, requestNum) {
+  const prefix = chalk.gray(`\n[${current}/${total}] 请求 #${requestNum} ${isError ? '失败' : '完成'}:`);
+  console.log(prefix);
+  
+  if (isError) {
+    console.log(chalk.red(`  错误: ${result.error}`));
+  } else if (result.success !== false) {
+    console.log(`  TPS: ${chalk.green(result.tps.toFixed(2))} tokens/s`);
+    console.log(`  TTFT: ${result.ttft ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
+    console.log(`  输出Token: ${result.outputTokens} tokens`);
+    console.log(`  生成时间: ${result.generationTime ? (result.generationTime / 1000).toFixed(2) + ' s' : 'N/A'}`);
+    console.log(`  总请求时间: ${result.totalRequestTime} ms`);
+  }
+}
+
+/**
  * 测量单次请求的Token速度
+ * @param {Object} httpClient - Axios 实例
  * @param {string} url - API URL
- * @param {string} apiKey - API密钥
+ * @param {string} userAgent - User-Agent 字符串
  * @param {string} model - 模型名称
  * @param {Array} messages - 消息数组
  * @param {number} maxOutputTokens - 最大输出Token数
  * @returns {Promise<Object>} 测量结果
  */
-async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, timeout = DEFAULT_TIMEOUT) {
+async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens) {
   const requestStart = Date.now();
   let firstTokenTime = null;
   let tokens = [];
-  let outputText = '';
-
-  // 构建请求头，仅在apiKey存在时添加Authorization
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': process.env.USER_AGENT || 'Kilo-Code/5.10.4'
-  };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
+  let outputText = '';  // 用于回退计算（只包含content，不含reasoning）
 
   try {
-    // 构造请求 - 使用流式响应，不使用agent避免循环引用问题
-    const response = await axios({
-      method: 'POST',
-      url: url,
-      headers,
-      data: {
-        model: model,
-        messages: messages,
-        max_tokens: maxOutputTokens,
-        stream: true
-      },
-      responseType: 'stream',
-      timeout: timeout  // 使用传入的超时参数
+    // 构造请求 - 使用流式响应，使用带重试的 httpClient
+    const response = await httpClient.post(url, {
+      model: model,
+      messages: messages,
+      max_tokens: maxOutputTokens,
+      stream: true
+    }, {
+      responseType: 'stream'
     });
 
     return new Promise((resolve, reject) => {
       let buffer = '';
+      let apiUsage = null;  // API返回的usage信息
       
       response.data.on('data', (chunk) => {
         buffer += chunk.toString();
@@ -460,21 +433,41 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta || {};
               
-              // 支持标准OpenAI格式和Qwen的reasoning格式
-              const content = delta.content || delta.reasoning || '';
+              // 捕获API返回的usage信息（流式响应通常在最后发送）
+              if (parsed.usage) {
+                apiUsage = parsed.usage;
+              }
               
+              // 支持标准OpenAI格式和Qwen的reasoning格式
+              const content = delta.content || '';
+              const reasoning = delta.reasoning || '';
+              
+              // TTFT只计算实际内容的首个Token，不包含推理过程(reasoning)
+              // reasoning是模型的内部思考，用户看不到，所以不应该计入TTFT
               if (content) {
                 if (!firstTokenTime) {
                   firstTokenTime = Date.now();
                 }
                 tokens.push({
                   time: Date.now(),
-                  content: content
+                  content: content,
+                  type: 'content'
                 });
                 outputText += content;
               }
+              // 推理内容单独处理，不计入TTFT，不计入outputText
+              if (reasoning) {
+                tokens.push({
+                  time: Date.now(),
+                  content: reasoning,
+                  type: 'reasoning'
+                });
+              }
             } catch (e) {
-              // 忽略解析错误
+              // 记录解析错误但不中断处理
+              if (process.env.DEBUG) {
+                console.warn(chalk.yellow(`⚠️ 流式数据解析错误: ${e.message}`));
+              }
             }
           }
         }
@@ -484,10 +477,12 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
         const requestEnd = Date.now();
         const totalRequestTime = requestEnd - requestStart;
         const ttft = firstTokenTime ? firstTokenTime - requestStart : null;
-        // 使用tokenizer精确计算输出token数量
-        const outputTokens = countMessagesTokens([{ role: 'assistant', content: outputText }]);
-        // 计算输入token数量
-        const inputTokensActual = countMessagesTokens(messages);
+        // 优先使用API返回的token数量，回退到tokenizer计算
+        const outputTokens = apiUsage?.completion_tokens 
+          ?? countMessagesTokens([{ role: 'assistant', content: outputText }]);
+        // 输入token优先使用API返回值
+        const inputTokensActual = apiUsage?.prompt_tokens 
+          ?? countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
         const tps = outputTokens > 0 && generationTime > 0
           ? (outputTokens / (generationTime / 1000)).toFixed(2)
@@ -501,7 +496,8 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
           inputTokens: inputTokensActual,
           generationTime,
           tps: parseFloat(tps),
-          outputText
+          outputText,
+          tokenSource: apiUsage ? 'api' : 'tokenizer'  // 标记token来源
         });
       });
 
@@ -515,94 +511,22 @@ async function measureTokenSpeed(url, apiKey, model, messages, maxOutputTokens, 
       let errorDetail = '';
       try {
         const errorData = error.response.data;
-        if (typeof errorData === 'object' && errorData !== null) {
-          // 安全地序列化错误数据，避免循环引用
-          const safeErrorData = {};
-          for (const key of Object.keys(errorData)) {
-            const value = errorData[key];
-            if (typeof value === 'object' && value !== null) {
-              safeErrorData[key] = '[Object]';
-            } else {
-              safeErrorData[key] = value;
-            }
+        // 使用 JSON.stringify 的 replacer 参数安全序列化
+        errorDetail = JSON.stringify(errorData, (key, value) => {
+          if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            return '[Object]';
           }
-          errorDetail = JSON.stringify(safeErrorData, null, 2);
-        } else if (typeof errorData === 'string') {
-          errorDetail = errorData;
-        } else {
-          errorDetail = error.message || 'Unknown error';
-        }
+          return value;
+        }, 2);
       } catch (e) {
         errorDetail = error.message || 'Failed to serialize error data';
       }
       console.log(chalk.red(`\n  详细错误: HTTP ${error.response.status}`));
       console.log(chalk.red(`  响应数据: ${errorDetail.substring(0, 500)}`));
     }
-    // 如果流式请求失败，尝试非流式请求
-    return await measureTokenSpeedNonStreaming(url, apiKey, model, messages, maxOutputTokens, timeout);
+    // 如果流式请求失败，直接抛出错误
+    throw error;
   }
-}
-
-/**
- * 非流式请求测量Token速度
- * @param {string} url - API URL
- * @param {string} apiKey - API密钥
- * @param {string} model - 模型名称
- * @param {Array} messages - 消息数组
- * @param {number} maxOutputTokens - 最大输出Token数
- * @returns {Promise<Object>} 测量结果
- */
-async function measureTokenSpeedNonStreaming(url, apiKey, model, messages, maxOutputTokens, timeout = DEFAULT_TIMEOUT) {
-  const requestStart = Date.now();
-
-  // 构建请求头，仅在apiKey存在时添加Authorization
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': process.env.USER_AGENT || 'Kilo-Code/5.10.4'
-  };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
-
-  const response = await axios({
-    method: 'POST',
-    url: url,
-    headers,
-    data: {
-      model: model,
-      messages: messages,
-      max_tokens: maxOutputTokens,
-      stream: false
-    },
-    timeout: timeout  // 使用传入的超时参数
-  });
-
-  const requestEnd = Date.now();
-  const totalRequestTime = requestEnd - requestStart;
-  
-  // 从响应中获取Token信息
-  const usage = response.data.usage || {};
-  const outputContent = response.data.choices?.[0]?.message?.content || '';
-  const outputTokens = usage.completion_tokens || countMessagesTokens([{ role: 'assistant', content: outputContent }]);
-  const inputTokensActual = usage.prompt_tokens || countMessagesTokens(messages);
-
-  // 估算TPS (假设TTFT约为总时间的10%)
-  const estimatedTTFT = totalRequestTime * 0.1;
-  const generationTime = totalRequestTime - estimatedTTFT;
-  const tps = outputTokens > 0 && generationTime > 0 
-    ? (outputTokens / (generationTime / 1000)).toFixed(2) 
-    : 0;
-
-  return {
-    success: true,
-    totalRequestTime,
-    ttft: estimatedTTFT,
-    outputTokens,
-    generationTime,
-    tps: parseFloat(tps),
-    inputTokens: inputTokensActual,
-    outputText: outputContent
-  };
 }
 
 /**

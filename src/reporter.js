@@ -8,6 +8,22 @@ import path from 'path';
 import chalk from 'chalk';
 
 /**
+ * HTML转义函数，防止XSS攻击
+ * @param {string} str - 原始字符串
+ * @returns {string} 转义后的字符串
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+}
+
+/**
  * 生成测试报告
  * @param {Object} results - 测试结果
  * @param {string} outputDir - 输出目录
@@ -141,18 +157,6 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     }
   }
 
-  // 性能评估
-  lines.push('## 📈 性能评估');
-  lines.push('');
-  lines.push(generatePerformanceAssessment(results));
-  lines.push('');
-
-  // 结论
-  lines.push('## 📝 结论');
-  lines.push('');
-  lines.push(generateConclusion(results));
-  lines.push('');
-
   lines.push('---');
   lines.push(`*报告生成时间: ${new Date().toISOString()}*`);
 
@@ -177,54 +181,154 @@ async function generateHtmlReport(results, outputDir, baseName) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LLM API 性能测试报告</title>
+  <title>${escapeHtml(results.reportTitle) || 'LLM API 性能测试报告'}</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5; color: #333; line-height: 1.6;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f7fafc; 
+      color: #2d3748; 
+      line-height: 1.6;
+      min-height: 100vh;
     }
-    .container { width: 90%; max-width: 1800px; margin: 0 auto; padding: 15px; }
-    h1 { color: #2c3e50; margin-bottom: 10px; font-size: 1.5rem; }
-    h2 { color: #34495e; margin: 15px 0 10px; font-size: 1.2rem; }
-    h3 { color: #7f8c8d; margin: 10px 0 5px; font-size: 1rem; }
-    .card { background: white; border-radius: 8px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    .card-tokenspeed { border-left: 4px solid #27ae60; }
-    .card-tokenspeed h2 { color: #1e8449; }
-    .config-row { display: flex; gap: 20px; margin-bottom: 15px; }
+    .container { width: 95%; max-width: 1600px; margin: 0 auto; padding: 25px; }
+    h1 { 
+      color: #2d3748; 
+      margin-bottom: 8px; 
+      font-size: 1.8rem; 
+      font-weight: 600;
+    }
+    .report-title { 
+      color: #3182ce; 
+      font-size: 1.3rem; 
+      font-weight: 500;
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .report-title::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 24px;
+      background: #4299e1;
+      border-radius: 2px;
+    }
+    h2 { color: #2d3748; margin: 20px 0 12px; font-size: 1.3rem; font-weight: 500; }
+    h3 { color: #2d3748; margin: 15px 0 10px; font-size: 1.1rem; font-weight: 500; }
+    h4 { color: #4a5568; margin: 10px 0 8px; font-size: 0.95rem; font-weight: 500; }
+    .card { 
+      background: white; 
+      border-radius: 8px; 
+      padding: 25px; 
+      margin: 20px 0; 
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .card-tokenspeed { 
+      border-left: none;
+      background: white;
+    }
+    .config-row { display: flex; gap: 25px; margin-bottom: 20px; }
     .config-table { flex: 1; }
     .config-metrics { flex: 1; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
-    th { background: #3498db; color: white; }
-    tr:hover { background: #f8f9fa; }
-    .metric-value { font-size: 20px; font-weight: bold; color: #3498db; }
-    .metric-label { font-size: 11px; color: #7f8c8d; }
-    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-    .metric-card { text-align: center; padding: 12px; background: #f8f9fa; border-radius: 6px; }
-    .good { color: #27ae60; }
-    .warning { color: #f39c12; }
-    .bad { color: #e74c3c; }
-    .timestamp { color: #7f8c8d; font-size: 13px; margin-bottom: 10px; }
+    table { 
+      width: 100%; 
+      border-collapse: separate; 
+      border-spacing: 0;
+      font-size: 13px;
+    }
+    th, td { 
+      padding: 10px 14px; 
+      text-align: left; 
+      border-bottom: 1px solid #e2e8f0;
+    }
+    th { 
+      background: #f7fafc; 
+      color: #4a5568; 
+      font-weight: 500;
+      font-size: 12px;
+    }
+    th:first-child { border-radius: 6px 0 0 0; }
+    th:last-child { border-radius: 0 6px 0 0; }
+    tr:last-child td:first-child { border-radius: 0 0 0 6px; }
+    tr:last-child td:last-child { border-radius: 0 0 6px 0; }
+    tr:hover { background: #f7fafc; }
+    .metric-value { font-size: 24px; font-weight: 600; color: #2d3748; }
+    .metric-label { font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .metric-card { 
+      text-align: center; 
+      padding: 15px; 
+      background: #fff; 
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .metric-card:hover {
+      border-color: #cbd5e0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .good { color: #38a169; }
+    .warning { color: #d69e2e; }
+    .bad { color: #e53e3e; }
+    .timestamp { 
+      color: #718096; 
+      font-size: 14px; 
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .timestamp::before {
+      content: '📅';
+    }
     .chart-container { position: relative; height: 220px; }
-    .charts-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
-    .chart-card { background: #fafafa; border-radius: 6px; padding: 10px; }
-    #timelineChart { background: #fafafa; border-radius: 6px; }
-    .timeline-container { height: 280px; margin: 10px 0; }
+    .charts-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .chart-card { 
+      background: #fff; 
+      border-radius: 8px; 
+      padding: 15px;
+      border: 1px solid #e2e8f0;
+      transition: all 0.2s;
+    }
+    .chart-card:hover {
+      border-color: #cbd5e0;
+    }
+    #timelineChart { background: #f7fafc; border-radius: 6px; }
+    .timeline-container { 
+      height: 280px; 
+      margin: 15px 0;
+      background: #f7fafc;
+      border-radius: 6px;
+      padding: 15px;
+      border: 1px solid #e2e8f0;
+    }
+    .panel {
+      animation: fadeIn 0.5s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .panel-1 { animation-delay: 0.1s; }
+    .panel-2 { animation-delay: 0.2s; }
+    .panel-3 { animation-delay: 0.3s; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>🚀 LLM API 性能测试报告</h1>
+    ${results.reportTitle ? `
+    <div class="report-title">${escapeHtml(results.reportTitle)}</div>
+    ` : ''}
     <p class="timestamp">测试时间: ${new Date().toLocaleString('zh-CN')}</p>
     
     ${generateTokenSpeedHtml(results, chartData)}
-    
-    <div class="card">
-      <h2>📝 结论</h2>
-      <p style="font-size: 13px;">${generateConclusion(results)}</p>
-    </div>
   </div>
   
   <script>
@@ -251,7 +355,10 @@ function prepareChartData(results) {
   // Token速度测试图表数据
   if (results.tokenSpeed && results.tokenSpeed.success) {
     const r = results.tokenSpeed;
-    const raw = r.raw || [];
+    // 对 raw 数组按 requestIndex 排序，确保图表X轴按数字顺序显示
+    const raw = (r.raw || []).sort((a, b) =>
+      (a.requestIndex !== undefined ? a.requestIndex : 0) - (b.requestIndex !== undefined ? b.requestIndex : 0)
+    );
     const failed = r.failed || [];
     
     // 合并成功和失败的请求，用于甘特图
@@ -299,7 +406,7 @@ function prepareChartData(results) {
       tps: raw.map(d => d.tps),
       ttft: raw.map(d => d.ttft),
       outputTokens: raw.map(d => d.outputTokens),
-      inputTokens: inputTokensArray,  // 每个请求的实际输入Token数
+      inputTokens: raw.map(d => d.inputTokens || 0),  // 每个请求的实际输入Token数
       inputTokensStats: inputTokensStats,  // 输入Token统计
       requestTime: raw.map(d => d.totalRequestTime),
       // 时间线数据
@@ -382,8 +489,8 @@ function generateChartScripts(chartData) {
         }
       });
       
-      // 请求标签（从请求1开始）
-      const labels = timelineData.map((d, i) => '请求 ' + (d.requestIndex + 1));
+      // 请求标签（从请求1开始）- timelineData 已经按 requestIndex 排序
+      const labels = timelineData.map(d => '请求 ' + (d.requestIndex + 1));
       
       new Chart(timelineCtx, {
         type: 'bar',
@@ -478,69 +585,109 @@ function generateChartScripts(chartData) {
     ` : '';
     
     scripts += `
-    // TPS分布图
+    // TPS分布图 - 使用折线图更适合数据较多时
     const tpsCtx = document.getElementById('tpsChart');
     if (tpsCtx) {
       new Chart(tpsCtx, {
-        type: 'bar',
+        type: 'line',
         data: {
           labels: ${JSON.stringify(ts.labels)},
           datasets: [{
             label: 'TPS (tokens/s)',
             data: ${JSON.stringify(ts.tps)},
-            backgroundColor: 'rgba(52, 152, 219, 0.6)',
-            borderColor: 'rgba(52, 152, 219, 1)',
-            borderWidth: 1
+            borderColor: '#3182ce',
+            backgroundColor: 'rgba(49, 130, 206, 0.1)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#3182ce',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1,
+            fill: true,
+            tension: 0.3
           }, {
             label: '平均值',
             data: Array(${ts.tps.length}).fill(${ts.tpsStats.mean.toFixed(2)}),
             type: 'line',
-            borderColor: 'rgba(231, 76, 60, 1)',
+            borderColor: '#e53e3e',
             borderWidth: 2,
             borderDash: [5, 5],
             pointRadius: 0,
-            fill: false
+            fill: false,
+            tension: 0
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           scales: {
-            y: { beginAtZero: true, title: { display: true, text: 'tokens/s' } }
+            y: { 
+              beginAtZero: true, 
+              title: { display: true, text: 'tokens/s' },
+              grid: { color: '#e2e8f0' }
+            },
+            x: {
+              grid: { display: false }
+            }
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: { usePointStyle: true }
+            }
           }
         }
       });
     }
 
-    // TTFT分布图
+    // TTFT分布图 - 使用折线图更适合数据较多时
     const ttftCtx = document.getElementById('ttftChart');
     if (ttftCtx) {
       new Chart(ttftCtx, {
-        type: 'bar',
+        type: 'line',
         data: {
           labels: ${JSON.stringify(ts.labels)},
           datasets: [{
             label: 'TTFT (ms)',
             data: ${JSON.stringify(ts.ttft)},
-            backgroundColor: 'rgba(46, 204, 113, 0.6)',
-            borderColor: 'rgba(46, 204, 113, 1)',
-            borderWidth: 1
+            borderColor: '#ed8936',
+            backgroundColor: 'rgba(237, 137, 54, 0.1)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#ed8936',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1,
+            fill: true,
+            tension: 0.3
           }, {
             label: '平均值',
             data: Array(${ts.ttft.length}).fill(${ts.ttftStats.mean.toFixed(0)}),
             type: 'line',
-            borderColor: 'rgba(231, 76, 60, 1)',
+            borderColor: '#e53e3e',
             borderWidth: 2,
             borderDash: [5, 5],
             pointRadius: 0,
-            fill: false
+            fill: false,
+            tension: 0
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           scales: {
-            y: { beginAtZero: true, title: { display: true, text: 'ms' } }
+            y: { 
+              beginAtZero: true, 
+              title: { display: true, text: 'ms' },
+              grid: { color: '#e2e8f0' }
+            },
+            x: {
+              grid: { display: false }
+            }
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: { usePointStyle: true }
+            }
           }
         }
       });
@@ -559,14 +706,14 @@ function generateChartScripts(chartData) {
           datasets: [{
             label: '输出Tokens',
             data: ${JSON.stringify(ts.outputTokens)},
-            backgroundColor: 'rgba(46, 204, 113, 0.8)',
-            borderColor: 'rgba(46, 204, 113, 1)',
+            backgroundColor: 'rgba(128, 90, 213, 0.8)',
+            borderColor: 'rgba(128, 90, 213, 1)',
             borderWidth: 1
           }, {
             label: '输入Tokens',
             data: inputTokensArray,
-            backgroundColor: 'rgba(241, 196, 15, 0.8)',
-            borderColor: 'rgba(241, 196, 15, 1)',
+            backgroundColor: 'rgba(56, 178, 172, 0.8)',
+            borderColor: 'rgba(56, 178, 172, 1)',
             borderWidth: 1
           }]
         },
@@ -630,96 +777,120 @@ function generateTokenSpeedHtml(results, chartData) {
   
   return `
     <div class="card card-tokenspeed">
-      <h2>⚡ Token生成速度测试</h2>
-      
       <!-- 指标说明 -->
-      <div class="metric-explanation" style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 12px; line-height: 1.6;">
-        <strong>📖 指标说明：</strong>
+      <div class="metric-explanation" style="background: #f0f4f8; color: #4a5568; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; border-left: 3px solid #4299e1;">
+        <strong style="color: #2d3748;">📖 指标说明：</strong>
         <span style="margin-left: 8px;">
-          <b>TTFT</b> = 首Token延迟 (Time To First Token)，从发送请求到收到第一个Token的时间 |
-          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)，衡量生成速度
+          <b>TTFT</b> = 首Token延迟 (Time To First Token) |
+          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)
         </span>
       </div>
       
-      <div class="config-row">
-        <div class="config-table">
-          <table>
-            <tr><th>参数</th><th>值</th></tr>
-            ${r.reportTitle ? `<tr><td><strong>测试标题</strong></td><td><strong>${r.reportTitle}</strong></td></tr>` : ''}
-            <tr><td>API URL</td><td>${r.config.url || 'N/A'}</td></tr>
-            <tr><td>模型</td><td>${r.config.model || 'N/A'}</td></tr>
-            ${r.config.sampleCount > 0 ? `<tr><td>Sample数量</td><td>${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
-            <tr><td>最大输出Token数</td><td>${r.config.maxOutputTokens}</td></tr>
-            <tr><td>并发数</td><td>${r.config.concurrency}</td></tr>
-            <tr><td>并发模式</td><td>${r.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'}</td></tr>
-            <tr><td>采样次数</td><td>${r.config.samples}</td></tr>
-            <tr><td>总测试时间</td><td>${totalTimeStr}</td></tr>
-          </table>
-        </div>
-        <div class="config-metrics">
-          <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
-            <div class="metric-card">
-              <div class="metric-value ${r.metrics.tps.mean >= 50 ? 'good' : r.metrics.tps.mean >= 20 ? 'warning' : 'bad'}">${r.metrics.tps.mean.toFixed(1)}</div>
-              <div class="metric-label">平均 TPS</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value ${r.metrics.throughputTps && r.metrics.throughputTps >= 100 ? 'good' : r.metrics.throughputTps && r.metrics.throughputTps >= 50 ? 'warning' : 'bad'}">${r.metrics.throughputTps ? r.metrics.throughputTps.toFixed(1) : '-'}</div>
-              <div class="metric-label">整体吞吐 TPS</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value ${r.metrics.ttft.mean < 500 ? 'good' : r.metrics.ttft.mean < 2000 ? 'warning' : 'bad'}">${r.metrics.ttft.mean.toFixed(0)}ms</div>
-              <div class="metric-label">平均 TTFT</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value">${r.metrics.outputTokens.mean.toFixed(0)}</div>
-              <div class="metric-label">平均输出Tokens</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value ${r.errors && r.errors.total === 0 ? 'good' : r.errors && parseFloat(r.errors.rate) < 10 ? 'warning' : 'bad'}">${r.errors ? r.errors.total : 0}</div>
-              <div class="metric-label">失败请求</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-value">${r.config.samples - (r.errors ? r.errors.total : 0)}</div>
-              <div class="metric-label">成功请求</div>
-            </div>
+      <!-- Panel 1: 参数及指标卡片 -->
+      <div class="panel panel-1" style="margin-bottom: 25px;">
+        <h3 style="color: #2d3748; font-size: 16px; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; font-weight: 500;">
+          <span style="background: #4299e1; color: white; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-right: 10px;">1</span>
+          测试配置与核心指标
+        </h3>
+        <div class="config-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="config-table" style="background: #fff; border-radius: 8px; padding: 0; border: 1px solid #e2e8f0;">
+            <table style="background: white; border-radius: 6px; overflow: hidden; font-size: 13px;">
+              <tr><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">参数</th><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">值</th></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${r.config.url || 'N/A'}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${r.config.model || 'N/A'}</span></td></tr>
+              ${r.config.sampleCount > 0 ? `<tr><td style="border-bottom: 1px solid #edf2f7;">Sample数量</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
+              <tr><td style="border-bottom: 1px solid #edf2f7;">最大输出Token数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.maxOutputTokens}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">并发模式</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'}</td></tr>
+              <tr><td>总测试时间</td><td><strong style="color: #2d3748;">${totalTimeStr}</strong></td></tr>
+            </table>
           </div>
-          <!-- 性能评估放在指标下方 -->
-          <div style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #3498db;">
-            <h4 style="margin: 0 0 8px 0; color: #2c3e50; font-size: 13px;">📈 性能评估</h4>
-            <p style="font-size: 12px; margin: 0; line-height: 1.8;">${generatePerformanceAssessment(results)}</p>
+          <div class="config-metrics">
+            <div class="grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #3182ce;">${r.metrics.tps.mean.toFixed(1)}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均 TPS</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.throughputTps ? r.metrics.throughputTps.toFixed(1) : '-'}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">整体吞吐 TPS</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #3182ce;">${(r.metrics.ttft.mean / 1000).toFixed(2)}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均 TTFT</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${(r.metrics.ttft.median / 1000).toFixed(2)}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">TTFT 中位数</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.outputTokens.mean.toFixed(0)}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均输出Tokens</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #d69e2e;">${chartData.tokenSpeed && chartData.tokenSpeed.inputTokensStats ? chartData.tokenSpeed.inputTokensStats.mean.toFixed(0) : '-'}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均输入Tokens</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #e53e3e;">${r.config.concurrency}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">并发数</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #d69e2e;">${r.config.samples}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">采样次数</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; ${r.errors && r.errors.total > 0 ? 'color: #e53e3e;' : 'color: #38a169;'}">${r.errors && r.errors.total > 0 ? ((r.config.samples - r.errors.total) / r.config.samples * 100).toFixed(1) : '100.0'}<span style="font-size: 12px; color: #718096; margin-left: 2px;">%</span></div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">成功率</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
       
       ${hasTimeline ? `
-      <h3>📊 请求时间线（甘特图）- 总时长: ${totalTimeStr}</h3>
-      <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 5px;">
-        展示每个请求的时间分布：🟡 等待TTFT | 🟢 Token生成 | 🔴 失败请求
-      </p>
-      <div class="timeline-container" style="height: ${Math.max(200, (r.config.samples) * 25 + 80)}px;">
-        <canvas id="timelineChart"></canvas>
+      <!-- Panel 2: 甘特图 -->
+      <div class="panel panel-2" style="margin-bottom: 25px; background: #fff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0;">
+        <h3 style="color: #2d3748; font-size: 16px; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; font-weight: 500;">
+          <span style="background: #805ad5; color: white; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-right: 10px;">2</span>
+          请求时间线（甘特图）
+          <span style="margin-left: auto; font-size: 12px; color: #718096; font-weight: normal;">总时长: ${totalTimeStr}</span>
+        </h3>
+        <p style="color: #718096; font-size: 12px; margin-bottom: 15px; background: #f7fafc; padding: 10px 12px; border-radius: 6px; display: inline-block;">
+          <span style="display: inline-block; width: 12px; height: 12px; background: #ecc94b; border-radius: 2px; margin-right: 5px; vertical-align: middle;"></span> 等待TTFT
+          <span style="display: inline-block; width: 12px; height: 12px; background: #48bb78; border-radius: 2px; margin-left: 15px; margin-right: 5px; vertical-align: middle;"></span> Token生成
+          <span style="display: inline-block; width: 12px; height: 12px; background: #f56565; border-radius: 2px; margin-left: 15px; margin-right: 5px; vertical-align: middle;"></span> 失败请求
+        </p>
+        <div class="timeline-container" style="height: ${Math.max(250, (r.config.samples) * 28 + 60)}px; background: #f7fafc; border-radius: 6px; padding: 10px; border: 1px solid #e2e8f0;">
+          <canvas id="timelineChart"></canvas>
+        </div>
       </div>
       ` : ''}
       
       ${chartData.tokenSpeed ? `
-      <h3>📈 性能图表</h3>
-      <div class="charts-row">
-        <div class="chart-card">
-          <h4>TPS 分布</h4>
-          <div class="chart-container">
-            <canvas id="tpsChart"></canvas>
+      <!-- Panel 3: 3个性能图表 -->
+      <div class="panel panel-3">
+        <h3 style="color: #2d3748; font-size: 16px; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; font-weight: 500;">
+          <span style="background: #e53e3e; color: white; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; margin-right: 10px;">3</span>
+          性能分布图表
+        </h3>
+        <div class="charts-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+          <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
+            <h4 style="color: #3182ce; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">📊 TPS 分布</h4>
+            <div class="chart-container" style="position: relative; height: 220px;">
+              <canvas id="tpsChart"></canvas>
+            </div>
           </div>
-        </div>
-        <div class="chart-card">
-          <h4>TTFT 分布</h4>
-          <div class="chart-container">
-            <canvas id="ttftChart"></canvas>
+          <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
+            <h4 style="color: #ed8936; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">⏱️ TTFT 分布</h4>
+            <div class="chart-container" style="position: relative; height: 220px;">
+              <canvas id="ttftChart"></canvas>
+            </div>
           </div>
-        </div>
-        <div class="chart-card">
-          <h4>输入/输出Token分布</h4>
-          <div class="chart-container">
-            <canvas id="outputChart"></canvas>
+          <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
+            <h4 style="color: #805ad5; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">🔄 输入/输出Token分布</h4>
+            <div class="chart-container" style="position: relative; height: 220px;">
+              <canvas id="outputChart"></canvas>
+            </div>
           </div>
         </div>
       </div>

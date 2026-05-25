@@ -120,7 +120,7 @@ function generateMultiRoundContext(targetTokens, options) {
 }
 
 /**
- * 生成精确token数量的文本
+ * 生成精确token数量的文本（优化版）
  * @param {number} targetTokens - 目标token数量
  * @returns {string} 生成的文本
  */
@@ -129,41 +129,63 @@ export function generateExactTokenText(targetTokens) {
     return '';
   }
 
-  // 基础文本模板
-  const baseText = 'This is a performance test message for API benchmarking purposes. ';
+  const baseText = 'The quick brown fox jumps over the lazy dog. Performance testing ensures API reliability and efficiency under load. ';
   const baseTokens = encode(baseText);
+  const baseLen = baseTokens.length;
 
-  // 计算需要重复的次数
-  const repetitions = Math.floor(targetTokens / baseTokens.length);
-  const remainingTokens = targetTokens % baseTokens.length;
-
-  // 构建文本
-  let text = baseText.repeat(repetitions);
-
-  // 添加剩余部分
-  if (remainingTokens > 0) {
-    // 逐字添加直到达到目标token数
-    let partialText = '';
-    const chars = 'abcdefghijklmnopqrstuvwxyz ';
-    
-    for (let i = 0; i < remainingTokens * 4; i++) {
-      partialText += chars[i % chars.length];
-      if (encode(text + partialText).length >= targetTokens) {
-        break;
-      }
-    }
-    
-    text += partialText;
+  if (targetTokens <= baseLen) {
+    const text = baseText.slice(0, Math.ceil(targetTokens * 3));
+    return adjustToExactTokens(text, targetTokens);
   }
 
-  // 精确调整：截断或填充
-  text = adjustToExactTokens(text, targetTokens);
+  const repetitions = Math.floor(targetTokens / baseLen);
+  const remainingTokens = targetTokens - (repetitions * baseLen);
 
-  return text;
+  let text = baseText.repeat(repetitions);
+
+  if (remainingTokens > 0) {
+    const filler = generateFillerText(remainingTokens);
+    text += filler;
+  }
+
+  return adjustToExactTokens(text, targetTokens);
 }
 
 /**
- * 调整文本到精确的token数量
+ * 生成填充文本（优化：预计算+二分查找）
+ * @param {number} targetTokens - 目标token数量
+ * @returns {string} 填充文本
+ */
+function generateFillerText(targetTokens) {
+  const candidates = [];
+  const step = Math.max(1, Math.floor(targetTokens / 10));
+
+  for (let len = step; len <= targetTokens * 2; len += step) {
+    const text = 'abcdefghijklmnopqrstuvwxyz '.repeat(Math.ceil(len / 27)).slice(0, len);
+    const tokens = encode(text).length;
+    if (tokens <= targetTokens * 1.5) {
+      candidates.push({ text, tokens });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return 'a '.repeat(targetTokens);
+  }
+
+  candidates.sort((a, b) => a.tokens - b.tokens);
+
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (Math.abs(c.tokens - targetTokens) < Math.abs(best.tokens - targetTokens)) {
+      best = c;
+    }
+  }
+
+  return best.text;
+}
+
+/**
+ * 调整文本到精确的token数量（优化：减少encode调用）
  * @param {string} text - 原始文本
  * @param {number} targetTokens - 目标token数量
  * @returns {string} 调整后的文本
@@ -171,20 +193,38 @@ export function generateExactTokenText(targetTokens) {
 function adjustToExactTokens(text, targetTokens) {
   let currentTokens = encode(text).length;
 
-  // 如果token数过多，逐步截断
-  while (currentTokens > targetTokens && text.length > 0) {
-    text = text.slice(0, -1);
-    currentTokens = encode(text).length;
+  if (currentTokens === targetTokens) {
+    return text;
   }
 
-  // 如果token数过少，逐步填充
-  const paddingChars = 'x ';
-  while (currentTokens < targetTokens) {
-    text += paddingChars[currentTokens % paddingChars.length];
-    currentTokens = encode(text).length;
+  if (currentTokens > targetTokens) {
+    const chars = text.split('');
+    let left = 0, right = chars.length;
+
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      const temp = chars.slice(0, mid).join('');
+      const tokens = encode(temp).length;
+
+      if (tokens >= targetTokens) {
+        right = mid;
+      } else {
+        left = mid + 1;
+      }
+    }
+
+    return chars.slice(0, left).join('');
   }
 
-  return text;
+  const padding = 'x ';
+  let result = text;
+  let paddingIdx = 0;
+
+  while (encode(result).length < targetTokens) {
+    result += padding[paddingIdx++ % padding.length];
+  }
+
+  return result;
 }
 
 /**

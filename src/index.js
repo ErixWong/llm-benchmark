@@ -21,6 +21,28 @@ dotenv.config();
 const PROMPT_TEMPLATE = '请从下列样本中选取一个进行仿写扩写。\n\n';
 
 // 简单默认提示词 - 用于非样本测试
+// 默认样本文件匹配规则
+const DEFAULT_SAMPLE_PATTERNS = [
+  /-(8k|16k)/,  // 匹配 -8k 或 -16k
+  /^(sample|novel|tech-news|conversation|code-samples|multimodal)-/  // 匹配特定前缀
+];
+
+/**
+ * 检查文件名是否匹配样本规则
+ * @param {string} filename - 文件名
+ * @returns {boolean} 是否匹配
+ */
+function matchesSamplePattern(filename) {
+  // 优先使用环境变量配置的规则
+  if (process.env.SAMPLE_FILE_PATTERNS) {
+    const patterns = process.env.SAMPLE_FILE_PATTERNS.split(',').map(p => new RegExp(p.trim()));
+    return patterns.some(pattern => pattern.test(filename));
+  }
+  // 使用默认规则
+  return DEFAULT_SAMPLE_PATTERNS.some(pattern => pattern.test(filename));
+}
+
+// 简单默认提示词 - 用于非样本测试
 const SIMPLE_PROMPT = '请写一篇关于人工智能发展历程的文章，包括重要的里程碑事件和未来展望。';
 
 program
@@ -112,10 +134,14 @@ program
   .option('--model <model>', '模型名称')
   .option('--system-prompt <prompt>', '系统提示词')
   .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
+  .option('-q, --quiet', '静默模式，仅输出最终结果')
+  .option('--dry-run', '仅输出测试配置，不实际执行请求')
   .action(async (options) => {
     const url = options.url || process.env.API_BASE_URL;
     const apiKey = options.apiKey || process.env.API_KEY;
     const model = options.model || process.env.API_MODEL;
+    const quiet = options.quiet || false;
+    const dryRun = options.dryRun || false;
     
     // 必填参数检查
     if (!url) {
@@ -127,7 +153,9 @@ program
       process.exit(1);
     }
     
-    console.log(chalk.blue('⚡ 开始Token生成速度测试...'));
+    if (!quiet) {
+      console.log(chalk.blue('⚡ 开始Token生成速度测试...'));
+    }
     
     const concurrency = safeParseInt(options.concurrency, 4, 'concurrency');
     const rounds = safeParseInt(options.rounds, 5, 'rounds');
@@ -139,7 +167,9 @@ program
     
     // 验证并发模式
     if (!['batch', 'pipeline'].includes(concurrencyMode)) {
-      console.warn(chalk.yellow(`⚠️ 无效的并发模式 "${concurrencyMode}"，使用默认值 "pipeline"`));
+      if (!quiet) {
+        console.warn(chalk.yellow(`⚠️ 无效的并发模式 "${concurrencyMode}"，使用默认值 "pipeline"`));
+      }
     }
     
     // 扫描样本文件
@@ -148,17 +178,7 @@ program
       try {
         const dataDir = path.join(process.cwd(), 'data');
         sampleFiles = await scanSampleFiles(dataDir);
-        sampleFiles = sampleFiles.filter(f => {
-          const name = path.basename(f);
-          return name.includes('-8k') ||
-                 name.includes('-16k') ||
-                 name.startsWith('sample-') ||
-                 name.startsWith('novel-') ||
-                 name.startsWith('tech-news-') ||
-                 name.startsWith('conversation-') ||
-                 name.startsWith('code-samples-') ||
-                 name.startsWith('multimodal-');
-        });
+        sampleFiles = sampleFiles.filter(f => matchesSamplePattern(path.basename(f)));
         
         if (sampleFiles.length === 0) {
           console.error(chalk.red('❌ 没有找到样本文件'));
@@ -173,10 +193,12 @@ program
           categories[category] = (categories[category] || 0) + 1;
         }
         
+        if (!quiet) {
         console.log(chalk.gray(`📚 找到 ${sampleFiles.length} 个样本文件:`));
         for (const [cat, count] of Object.entries(categories)) {
           console.log(chalk.gray(`   ${cat}: ${count} 个`));
         }
+      }
       } catch (error) {
         console.error(chalk.red(`❌ 无法读取样本目录: ${error.message}`));
         process.exit(1);
@@ -193,22 +215,31 @@ program
     const sampleInput = await generateInputText();
     const estimatedTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
     
-    console.log(chalk.gray(`模型: ${model}`));
-    console.log('测试参数:');
-    console.log(`  并发数: ${concurrency}`);
-    console.log(`  采样轮数: ${rounds}`);
-    console.log(`  总采样数: ${samples} (${concurrency} × ${rounds})`);
-    if (sampleCount > 0) {
-      console.log(`  每次随机抽取: ${sampleCount} 个样本`);
-    } else {
-      console.log(`  使用默认简单Prompt`);
+    if (!quiet) {
+      console.log(chalk.gray(`模型: ${model}`));
+      console.log('测试参数:');
+      console.log(`  并发数: ${concurrency}`);
+      console.log(`  采样轮数: ${rounds}`);
+      console.log(`  总采样数: ${samples} (${concurrency} × ${rounds})`);
+      if (sampleCount > 0) {
+        console.log(`  每次随机抽取: ${sampleCount} 个样本`);
+      } else {
+        console.log(`  使用默认简单Prompt`);
+      }
+      console.log(`  预估输入Token数: ${estimatedTokens}`);
+      console.log(`  最大输出Token数: ${maxOutputTokens}`);
+      console.log(`  请求超时: ${timeout / 1000}s`);
+      console.log(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
+      console.log(`  API URL: ${url}`);
+      console.log('');
     }
-    console.log(`  预估输入Token数: ${estimatedTokens}`);
-    console.log(`  最大输出Token数: ${maxOutputTokens}`);
-    console.log(`  请求超时: ${timeout / 1000}s`);
-    console.log(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
-    console.log(`  API URL: ${url}`);
-    console.log('');
+    
+    // Dry-run 模式：仅输出配置
+    if (dryRun) {
+      console.log(chalk.yellow('🔍 Dry-run 模式：仅输出配置，不执行请求'));
+      console.log(chalk.green('✅ 配置验证通过'));
+      process.exit(0);
+    }
     
     try {
       const results = await runLlmBenchmarkTest({
@@ -222,7 +253,8 @@ program
         concurrencyMode,
         sampleCount,
         generateInputText,
-        timeout
+        timeout,
+        quiet
       });
       
       // 检查测试是否成功
@@ -241,7 +273,9 @@ program
       results.reportTitle = reportTitle;
       
       await generateReport({ tokenSpeed: results }, reportDir);
-      console.log(chalk.green('✅ 测试完成!'));
+      if (!quiet) {
+        console.log(chalk.green('✅ 测试完成!'));
+      }
     } catch (error) {
       console.error(chalk.red('❌ 测试失败:'), error.message);
       process.exit(1);
