@@ -1,132 +1,177 @@
 # LLM API Benchmark
 
-API端点并发能力与Token生成速度测试工具
+用于压测 LLM API 输出速度的命令行工具，当前项目实际提供的是默认 `start` 命令，用来执行 Token 生成速度测试。
 
 ## 功能特性
 
-- 🚀 **并发测试**: 测试API端点的并发处理能力
-- ⚡ **Token速度测试**: 测量LLM API的Token生成速度
-- 📊 **详细报告**: 生成详细的性能测试报告（HTML/JSON/Markdown）
-- 🔧 **可配置**: 支持多种测试参数配置
-- 📝 **多样本支持**: 支持多种类型文本样本（技术文档、对话、文学、代码等）
-- 🔄 **并发模式**: 支持批次(batch)和流水线(pipeline)两种并发模式
+- Token 生成速度测试：统计 TPS、TTFT、成功率等核心指标
+- 并发模式支持：支持 `batch` 和 `pipeline` 两种请求调度方式
+- 大上下文样本测试：可从 `data/samples/` 随机抽取多个文本样本拼接输入
+- 报告输出：测试完成后自动在 `results/` 生成 HTML、JSON、Markdown 报告
+- Dry-run 校验：可先验证配置和参数，不真正发请求
 
-## 快速开始
+## 运行前提
 
-### 安装依赖
+- Node.js `>= 18`
+- 可访问的兼容 OpenAI Chat Completions 的 API 地址
+- 可用模型名，例如 `gpt-4o-mini`、`glm-4.5-air` 等
+
+## 5 分钟上手
+
+### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-### 配置环境变量
+### 2. 复制环境变量模板
+
+macOS / Linux:
 
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，配置你的API端点和认证信息
 ```
 
-### 运行测试
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### 3. 填写最小必需配置
+
+至少需要配置下面 3 项：
+
+```env
+API_BASE_URL=https://api.example.com/v1/chat/completions
+API_KEY=your-api-key-here
+API_MODEL=gpt-4o-mini
+```
+
+其他参数可以先保持 `.env.example` 默认值。
+
+### 4. 先做一次配置检查
 
 ```bash
-# 查看帮助
+node src/index.js --dry-run
+```
+
+看到 `配置验证通过` 就说明当前参数可用于正式测试。
+
+### 5. 运行一次最小测试
+
+```bash
+node src/index.js -c 1 -r 1 -n 0
+```
+
+这条命令会使用默认 `start` 命令，执行 1 并发、1 轮采样、简单 prompt 的最小测试。测试完成后，报告会输出到 `results/report-时间戳/`。
+
+## 常用命令
+
+### 查看帮助
+
+```bash
 node src/index.js --help
-
-# 运行并发能力测试
-node src/index.js concurrency -c 10 -d 60
-
-# 运行Token生成速度测试
-node src/index.js token-speed -c 4 -r 5 -n 2
-
-# 运行完整测试
-node src/index.js all
-
-# 或使用npm脚本
-npm run concurrency
-npm run token-speed
-npm run benchmark
 ```
 
-## 命令详解
-
-### concurrency - 并发能力测试
+### 使用默认命令运行测试
 
 ```bash
-node src/index.js concurrency [options]
+node src/index.js -c 4 -r 5 -n 0
+```
+
+### 显式使用 `start` 命令
+
+```bash
+node src/index.js start -c 4 -r 5 -n 2
+```
+
+### 使用批次模式
+
+```bash
+node src/index.js start -c 2 -r 3 --concurrency-mode batch
+```
+
+### 只校验配置，不发请求
+
+```bash
+node src/index.js --dry-run
+```
+
+### 使用 npm 脚本
+
+```bash
+npm run benchmark -- --dry-run
+npm run benchmark -- -c 2 -r 2 -n 0
+```
+
+注意：当前 `package.json` 里没有 `npm run concurrency` 或 `npm run token-speed`，实际可用的是 `npm run benchmark` 和 `npm start`。
+
+## 参数说明
+
+当前 CLI 只有一个默认测试命令：`start`。
+
+```bash
+node src/index.js start [options]
 
 选项:
-  -c, --concurrency <number>   并发数 (默认: 10)
-  -d, --duration <seconds>     测试持续时间(秒) (默认: 60)
-  -r, --ramp-up <seconds>      预热时间(秒) (默认: 10)
-  -u, --url <url>              API端点URL
-  -k, --api-key <key>          API密钥
-  -m, --model <model>          模型名称 (默认: gpt-3.5-turbo)
-  -o, --output <dir>           输出目录 (默认: ./results)
+  -c, --concurrency <number>    并发数，默认读取 DEFAULT_CONCURRENCY 或 4
+  -r, --rounds <number>         采样轮数，总采样数 = 并发数 × 轮数
+  -n, --sample-count <number>   每次请求随机抽取的样本数量，0 表示使用简单 prompt
+  -m, --max-output <number>     最大输出 Token 数
+  --concurrency-mode <mode>     并发模式：batch 或 pipeline
+  -t, --timeout <seconds>       单次请求超时时间，单位秒
+  -u, --url <url>               API 地址，未传时读取 API_BASE_URL
+  -k, --api-key <key>           API Key，未传时读取 API_KEY
+  --model <model>               模型名，未传时读取 API_MODEL
+  --system-prompt <prompt>      自定义 system prompt
+  -o, --output <dir>            报告输出目录，默认 `./results`
+  -q, --quiet                   静默模式，只输出最终结果
+  --dry-run                     仅校验配置，不实际执行请求
 ```
 
-### token-speed - Token生成速度测试
+## 参数选择建议
 
-```bash
-node src/index.js token-speed [options]
-
-选项:
-  -c, --concurrency <number>       并发数 (默认: 4)
-  -r, --rounds <number>            采样轮数，总采样数 = 并发数 × 轮数 (默认: 5)
-  -n, --sample-count <number>      每次请求随机抽取的样本数量 (默认: 0，使用简单prompt)
-  -m, --max-output <number>        最大输出Token数 (默认: 30000)
-  --concurrency-mode <mode>        并发模式: batch(批次) 或 pipeline(流水线) (默认: pipeline)
-  -t, --timeout <seconds>          请求超时时间(秒) (默认: 90)
-  -u, --url <url>                  API端点URL
-  -k, --api-key <key>              API密钥
-  --model <model>                  模型名称 (默认: gpt-3.5-turbo)
-  --system-prompt <prompt>         系统提示词
-  -o, --output <dir>               输出目录 (默认: ./results)
-```
-
-### 示例
-
-```bash
-# 并发4，轮数5，共20次采样，每次抽取2个样本
-node src/index.js token-speed -c 4 -r 5 -n 2
-
-# 使用批次模式进行测试
-node src/index.js token-speed -c 2 -r 3 --concurrency-mode batch
-
-# 设置超时时间为120秒
-node src/index.js token-speed -c 4 -r 5 -t 120
-```
+- 先验证配置：`--dry-run`
+- 快速连通性测试：`-c 1 -r 1 -n 0`
+- 小规模性能采样：`-c 2 -r 3 -n 0`
+- 大上下文测试：`-c 2 -r 3 -n 2`
+- 降低接口压力：使用 `--concurrency-mode batch`
 
 ## 样本文件
 
-`data/samples/` 目录下提供了多种类型的样本文件：
-- `tech/` - 技术文档样本（sample-8k.txt ~ sample-16k.txt）
-- `code/` - 代码样本（code-samples-8k.txt）
-- `dialogue/` - 对话样本（conversation-8k.txt）
-- `literature/` - 文学样本（novel-8k.txt）
-- `news/` - 新闻样本（tech-news-8k.txt）
-- `mixed/` - 混合样本（multimodal-8k.txt）
+当 `-n` 大于 `0` 时，程序会扫描 `data/` 目录下的 `.txt` 样本，并按文件名规则筛选可用样本。当前仓库里的样本主要位于 `data/samples/`，包含以下类别：
+
+- `data/samples/tech/` - 技术文档样本
+- `data/samples/code/` - 代码样本
+- `data/samples/dialogue/` - 对话样本
+- `data/samples/literature/` - 文学样本
+- `data/samples/news/` - 新闻样本
+- `data/samples/mixed/` - 混合样本
+
+如果 `-n 0`，则不会读取样本文件，而是使用内置简单 prompt。
 
 ## 项目结构
 
 ```
-├── src/                    # 源代码
-│   ├── index.js            # CLI入口文件
-│   ├── benchmark.js        # 基准测试
-│   ├── concurrency.js      # 并发测试模块
-│   ├── llm-benchmark.js    # LLM基准测试核心
-│   ├── context-generator.js # 上下文生成器
-│   ├── http-client.js      # HTTP客户端
-│   ├── config.js           # 配置管理
-│   └── reporter.js         # 报告生成器
-├── data/samples/           # 测试样本文件
-├── config/                 # 配置文件
-├── docs/                   # 文档
-└── results/                # 测试结果输出（gitignored）
+├── src/                     # 源代码
+│   ├── index.js             # CLI 入口，默认 start 命令
+│   ├── llm-benchmark.js     # 测试执行核心
+│   ├── context-generator.js # Token 统计与上下文处理
+│   ├── http-client.js       # HTTP 请求客户端
+│   ├── config.js            # 配置加载
+│   └── reporter.js          # 报告生成
+├── data/                    # Prompt 与样本目录
+│   └── samples/             # 大上下文测试样本
+├── docs/                    # 文档与任务记录
+├── tests/                   # 测试
+└── results/                 # 测试结果输出（gitignored）
 ```
 
 ## 文档
 
-详细文档请参阅 [docs/README.md](docs/README.md)
+- 测试方法与指标说明：`docs/README.md`
+- 环境变量参考：`.env.example`
 
 ## License
 
