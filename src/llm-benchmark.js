@@ -73,19 +73,39 @@ export async function runLlmBenchmarkTest(options) {
   let useDynamicGeneration = !!generateInputText;
   let contextMessagesList = [];  // 每个请求的消息数组（非动态模式使用）
   let actualTokens = 0;
+  let activeInputGenerations = 0;
+  const inputGenerationQueue = [];
+  const maxConcurrentInputGenerations = Math.max(1, Math.min(concurrency, 8));
+
+  const withInputGenerationLimit = async (fn) => {
+    if (activeInputGenerations >= maxConcurrentInputGenerations) {
+      await new Promise(resolve => inputGenerationQueue.push(resolve));
+    }
+
+    activeInputGenerations++;
+    try {
+      return await fn();
+    } finally {
+      activeInputGenerations--;
+      const next = inputGenerationQueue.shift();
+      if (next) {
+        next();
+      }
+    }
+  };
   
   if (generateInputText) {
     // 动态生成模式：每次请求时生成新的输入
     console.log(chalk.cyan('\n🔧 测试配置:'));
     console.log(`  模型: ${model}`);
     console.log(`  输入模式: 动态生成（每次请求随机抽取样本）`);
-    console.log(`  每次抽取样本数: ${sampleCount}`);
-    // 预估token数
-    try {
-      const sampleInput = await generateInputText();
-      if (sampleInput) {
-        actualTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
-        console.log(`  预估输入Token数: ${actualTokens}`);
+      console.log(`  每次抽取样本数: ${sampleCount}`);
+      // 预估token数
+      try {
+      const sampleInput = await withInputGenerationLimit(() => generateInputText());
+        if (sampleInput) {
+          actualTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
+          console.log(`  预估输入Token数: ${actualTokens}`);
       }
     } catch (e) {
       console.log(`  预估输入Token数: 未知`);
@@ -152,7 +172,7 @@ export async function runLlmBenchmarkTest(options) {
         // 动态生成或使用预设消息
         let warmupMessages;
         if (useDynamicGeneration) {
-          const warmupText = await generateInputText();
+          const warmupText = await withInputGenerationLimit(() => generateInputText());
           warmupMessages = [{ role: 'user', content: warmupText }];
         } else {
           warmupMessages = contextMessagesList[0];
@@ -165,7 +185,8 @@ export async function runLlmBenchmarkTest(options) {
           warmupSpinner.fail(`预热失败: API错误 (HTTP ${statusCode})`);
           throw new Error(`预热失败: API返回错误状态码 ${statusCode}，请检查API服务器状态`);
         }
-        // 其他错误（如网络错误）忽略
+        warmupSpinner.fail(`预热失败: ${error.message}`);
+        throw new Error(`预热失败: ${error.message}`);
       }
     }
     warmupSpinner.succeed('预热完成');
@@ -174,7 +195,7 @@ export async function runLlmBenchmarkTest(options) {
   // 辅助函数：获取指定请求的消息（支持动态生成）
   const getMessagesForRequest = async (requestIndex) => {
     if (useDynamicGeneration) {
-      const text = await generateInputText();
+      const text = await withInputGenerationLimit(() => generateInputText());
       return [{ role: 'user', content: text }];
     }
     return contextMessagesList[requestIndex % contextMessagesList.length];
@@ -401,6 +422,72 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
   let visibleOutputText = '';
   let allOutputText = '';
 
+  const extractApiUsage = (parsed) => {
+    if (parsed?.usage?.prompt_tokens !== undefined || parsed?.usage?.completion_tokens !== undefined) {
+      return {
+        prompt_tokens: parsed.usage.prompt_tokens ?? null,
+        completion_tokens: parsed.usage.completion_tokens ?? null,
+        source: 'api-usage'
+      };
+    }
+
+    if (parsed?.timings?.prompt_n !== undefined || parsed?.timings?.predicted_n !== undefined) {
+      return {
+        prompt_tokens: parsed.timings.prompt_n ?? null,
+        completion_tokens: parsed.timings.predicted_n ?? null,
+        source: 'api-timings'
+      };
+    }
+
+    return null;
+  };
+
+  const processSseLine = (line, usageRef) => {
+    if (!line.startsWith('data: ')) {
+      return usageRef;
+    }
+
+    const data = line.slice(6);
+    if (data === '[DONE]') {
+      return usageRef;
+    }
+
+    try {
+      const parsed = JSON.parse(data);
+      const delta = parsed.choices?.[0]?.delta || {};
+
+      const extractedUsage = extractApiUsage(parsed);
+      if (extractedUsage) {
+        usageRef = extractedUsage;
+      }
+
+      const content = delta.content || '';
+      const reasoning = delta.reasoning || '';
+
+      if ((content || reasoning) && !firstTokenTime) {
+        firstTokenTime = Date.now();
+      }
+
+      if (content) {
+        if (!firstVisibleTokenTime) {
+          firstVisibleTokenTime = Date.now();
+        }
+        visibleOutputText += content;
+        allOutputText += content;
+      }
+
+      if (reasoning) {
+        allOutputText += reasoning;
+      }
+    } catch (e) {
+      if (process.env.DEBUG) {
+        console.warn(chalk.yellow(`⚠️ 流式数据解析错误: ${e.message}`));
+      }
+    }
+
+    return usageRef;
+  };
+
   try {
     // 构造请求 - 使用流式响应，使用带重试的 httpClient
     const response = await httpClient.post(url, {
@@ -415,73 +502,67 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
     return new Promise((resolve, reject) => {
       let buffer = '';
       let apiUsage = null;  // API返回的usage信息
+      let settled = false;
+
+      const cleanup = () => {
+        response.data.removeListener('data', onData);
+        response.data.removeListener('end', onEnd);
+        response.data.removeListener('error', onError);
+      };
+
+      const finishResolve = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const finishReject = (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      };
       
-      response.data.on('data', (chunk) => {
+      const onData = (chunk) => {
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta || {};
-              
-              // 捕获API返回的usage信息（流式响应通常在最后发送）
-              if (parsed.usage) {
-                apiUsage = parsed.usage;
-              }
-              
-              // 支持标准OpenAI格式和Qwen的reasoning格式
-              const content = delta.content || '';
-              const reasoning = delta.reasoning || '';
-              
-               // TTFT 记录真正的首个生成 token；首个可见内容单独记录。
-               if ((content || reasoning) && !firstTokenTime) {
-                 firstTokenTime = Date.now();
-               }
-
-               if (content) {
-                 if (!firstVisibleTokenTime) {
-                   firstVisibleTokenTime = Date.now();
-                 }
-                 visibleOutputText += content;
-                 allOutputText += content;
-               }
-               if (reasoning) {
-                 allOutputText += reasoning;
-               }
-            } catch (e) {
-              // 记录解析错误但不中断处理
-              if (process.env.DEBUG) {
-                console.warn(chalk.yellow(`⚠️ 流式数据解析错误: ${e.message}`));
-              }
-            }
-          }
+          apiUsage = processSseLine(line, apiUsage);
         }
-      });
+      };
 
-      response.data.on('end', () => {
+      const onEnd = () => {
+        if (buffer.trim()) {
+          apiUsage = processSseLine(buffer.trim(), apiUsage);
+        }
+
         const requestEnd = Date.now();
         const totalRequestTime = requestEnd - requestStart;
         const ttft = firstTokenTime ? firstTokenTime - requestStart : null;
         const visibleTtft = firstVisibleTokenTime ? firstVisibleTokenTime - requestStart : null;
-        // 优先使用API返回的 token 数量，回退时按所有生成文本统计，避免 reasoning 口径漂移。
         const outputTokens = apiUsage?.completion_tokens 
           ?? countTextTokens(allOutputText);
         const visibleOutputTokens = countTextTokens(visibleOutputText);
-        // 输入token优先使用API返回值
         const inputTokensActual = apiUsage?.prompt_tokens 
           ?? countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
-        const tps = outputTokens > 0 && generationTime > 0
-          ? outputTokens / (generationTime / 1000)
+        const effectiveGenerationTime = generationTime > 0
+          ? generationTime
+          : outputTokens > 0
+            ? Math.max(totalRequestTime, 1)
+            : 0;
+        const tps = outputTokens > 0 && effectiveGenerationTime > 0
+          ? outputTokens / (effectiveGenerationTime / 1000)
           : 0;
 
-        resolve({
+        finishResolve({
           success: true,
           totalRequestTime,
           ttft,
@@ -489,21 +570,25 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
           outputTokens,
           visibleOutputTokens,
           inputTokens: inputTokensActual,
-          generationTime,
+          generationTime: effectiveGenerationTime,
           tps,
           outputText: visibleOutputText,
           allOutputText,
-          tokenSource: apiUsage ? 'api' : 'tokenizer',
+          tokenSource: apiUsage?.source || 'tokenizer',
           requestSendTime: requestStart,
           responseReceiveTime: requestEnd
         });
-      });
+      };
 
-      response.data.on('error', (error) => {
+      const onError = (error) => {
         error.requestStart = requestStart;
         error.requestEnd = Date.now();
-        reject(error);
-      });
+        finishReject(error);
+      };
+
+      response.data.on('data', onData);
+      response.data.on('end', onEnd);
+      response.data.on('error', onError);
     });
   } catch (error) {
     // 输出详细错误信息用于调试
@@ -555,10 +640,13 @@ function processTokenSpeedResult(results, config) {
   const tpsValues = successResults.map(r => r.tps);
   const ttftValues = successResults.map(r => r.ttft).filter(v => v !== null);
   const visibleTtftValues = successResults.map(r => r.visibleTtft).filter(v => v !== null);
+  const inputTokensValues = successResults.map(r => r.inputTokens ?? 0);
   const outputTokensValues = successResults.map(r => r.outputTokens);
   const visibleOutputTokensValues = successResults.map(r => r.visibleOutputTokens ?? 0);
   const requestTimeValues = successResults.map(r => r.totalRequestTime);
-  const generationTimeValues = successResults.map(r => r.generationTime);
+  const generationTimeValues = successResults
+    .map(r => r.generationTime)
+    .filter(value => value > 0);
 
   // 计算整体吞吐量TPS = 总输出tokens / 总测试时间(秒)
   const totalOutputTokens = outputTokensValues.reduce((a, b) => a + b, 0);
@@ -607,6 +695,12 @@ function processTokenSpeedResult(results, config) {
         min: safeMin(visibleOutputTokensValues),
         max: safeMax(visibleOutputTokensValues),
         median: median(visibleOutputTokensValues)
+      },
+      inputTokens: {
+        mean: average(inputTokensValues),
+        min: safeMin(inputTokensValues),
+        max: safeMax(inputTokensValues),
+        median: median(inputTokensValues)
       },
       requestTime: {
         mean: average(requestTimeValues),

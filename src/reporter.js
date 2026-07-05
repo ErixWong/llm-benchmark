@@ -65,12 +65,100 @@ function normalizeReportResults(results) {
 
   if (results?.type === 'token-speed') {
     return {
+      ...results,
       tokenSpeed: results,
       reportTitle: results.reportTitle
     };
   }
 
   return results;
+}
+
+function getReportDisplayTime(results) {
+  const timestamp = results?.tokenSpeed?.timestamp || results?.timestamp;
+  return timestamp ? new Date(timestamp).toLocaleString('zh-CN') : new Date().toLocaleString('zh-CN');
+}
+
+function formatSecondsFromMs(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'N/A';
+  }
+
+  return `${(value / 1000).toFixed(2)} s`;
+}
+
+function getPrimaryTokenSource(results) {
+  const tokenSource = results?.tokenSpeed?.raw?.find(item => item?.tokenSource)?.tokenSource;
+  return tokenSource || 'unknown';
+}
+
+function getFailureSummary(results) {
+  const total = results?.tokenSpeed?.errors?.total || 0;
+  const rate = results?.tokenSpeed?.errors?.rate || '0.00';
+  const hasFailures = total > 0;
+
+  return {
+    total,
+    rate,
+    hasFailures,
+    label: hasFailures ? `失败 ${total} 个请求` : '无失败请求'
+  };
+}
+
+function getReportSummary(results) {
+  const tokenSpeed = results?.tokenSpeed;
+  if (!tokenSpeed?.success) {
+    return '本次测试未成功完成，报告仅包含失败摘要。';
+  }
+
+  const tokenSource = getPrimaryTokenSource(results);
+  const ttft = formatSecondsFromMs(tokenSpeed.metrics.ttft.mean);
+  const tps = `${tokenSpeed.metrics.tps.mean.toFixed(1)} tokens/s`;
+  const failureSummary = getFailureSummary(results);
+  const failureText = failureSummary.hasFailures ? `，失败 ${failureSummary.total} 个请求` : '，无失败请求';
+
+  return `${tokenSpeed.config.model || '当前模型'} 本次测试的 token 统计来源为 ${tokenSource}，平均 TTFT ${ttft}，加权平均 TPS ${tps}${failureText}。`;
+}
+
+function getTokenMetricCards(results) {
+  const tokenSpeed = results?.tokenSpeed;
+  if (!tokenSpeed?.success) {
+    return null;
+  }
+
+  return {
+    primaryOutputLabel: '服务端输出Tokens',
+    primaryOutputValue: tokenSpeed.metrics.outputTokens.mean.toFixed(0),
+    secondaryOutputLabel: '可见文本Tokens',
+    secondaryOutputValue: tokenSpeed.metrics.visibleOutputTokens.mean.toFixed(0),
+    secondaryOutputHint: '本地根据可见 content 估算，仅用于辅助理解'
+  };
+}
+
+function getInputTokenDisplay(results) {
+  const tokenSpeed = results?.tokenSpeed;
+  if (!tokenSpeed?.success) {
+    return null;
+  }
+
+  const configured = tokenSpeed.config?.inputTokens ?? null;
+  const actualStats = tokenSpeed.metrics?.inputTokens;
+  const actualMean = actualStats?.mean ?? null;
+  const actualMin = actualStats?.min ?? null;
+  const actualMax = actualStats?.max ?? null;
+
+  const hasMeaningfulDrift = configured !== null && actualMean !== null
+    ? Math.abs(configured - actualMean) >= Math.max(5, configured * 0.2)
+    : false;
+
+  return {
+    configured,
+    actualMean,
+    actualMin,
+    actualMax,
+    hasMeaningfulDrift,
+    driftHint: hasMeaningfulDrift ? '配置估算与实际请求输入存在明显偏差，请以下方实际统计为准。' : null
+  };
 }
 
 /**
@@ -98,7 +186,7 @@ async function generateMarkdownReport(results, outputDir, baseName) {
 
   lines.push('# LLM API 性能测试报告');
   lines.push('');
-  lines.push(`**测试时间**: ${new Date().toLocaleString('zh-CN')}`);
+  lines.push(`**测试时间**: ${getReportDisplayTime(results)}`);
   lines.push('');
 
   // Token速度测试结果
@@ -135,10 +223,10 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     lines.push('');
     lines.push('| 指标 | 值 |');
     lines.push('|------|-----|');
-    lines.push(`| 平均 | ${results.tokenSpeed.metrics.ttft.mean.toFixed(0)} ms |`);
-    lines.push(`| 中位数 | ${results.tokenSpeed.metrics.ttft.median.toFixed(0)} ms |`);
-    lines.push(`| 最小 | ${results.tokenSpeed.metrics.ttft.min.toFixed(0)} ms |`);
-    lines.push(`| 最大 | ${results.tokenSpeed.metrics.ttft.max.toFixed(0)} ms |`);
+    lines.push(`| 平均 | ${formatSecondsFromMs(results.tokenSpeed.metrics.ttft.mean)} |`);
+    lines.push(`| 中位数 | ${formatSecondsFromMs(results.tokenSpeed.metrics.ttft.median)} |`);
+    lines.push(`| 最小 | ${formatSecondsFromMs(results.tokenSpeed.metrics.ttft.min)} |`);
+    lines.push(`| 最大 | ${formatSecondsFromMs(results.tokenSpeed.metrics.ttft.max)} |`);
     lines.push('');
 
     lines.push('### 输出Token统计');
@@ -173,6 +261,12 @@ async function generateMarkdownReport(results, outputDir, baseName) {
         lines.push('');
       }
     }
+  } else if (results.tokenSpeed && results.tokenSpeed.success === false) {
+    lines.push('## ❌ Token生成速度测试失败');
+    lines.push('');
+    lines.push(`- 错误原因: ${results.tokenSpeed.error || '未知错误'}`);
+    lines.push(`- 失败请求数: ${results.tokenSpeed.failedCount || 0}`);
+    lines.push('');
   }
 
   lines.push('---');
@@ -344,7 +438,7 @@ async function generateHtmlReport(results, outputDir, baseName) {
     ${results.reportTitle ? `
     <div class="report-title">${escapeHtml(results.reportTitle)}</div>
     ` : ''}
-    <p class="timestamp">测试时间: ${new Date().toLocaleString('zh-CN')}</p>
+    <p class="timestamp">测试时间: ${getReportDisplayTime(results)}</p>
     
     ${generateTokenSpeedHtml(results, chartData)}
   </div>
@@ -424,13 +518,13 @@ function prepareChartData(results) {
     } : { min: 0, max: 0, mean: 0 };
     
     chartData.tokenSpeed = {
-      labels: raw.map((d, i) => `请求 ${(d.requestIndex !== undefined ? d.requestIndex : i) + 1}`),
-      tps: raw.map(d => d.tps),
-      ttft: raw.map(d => d.ttft),
-      outputTokens: raw.map(d => d.outputTokens),
-      inputTokens: raw.map(d => d.inputTokens || 0),  // 每个请求的实际输入Token数
+      labels: allRequests.map((_, i) => `请求 ${i + 1}`),
+      tps: allRequests.map(d => d.success === false ? null : d.tps),
+      ttft: allRequests.map(d => d.success === false ? null : d.ttft),
+      outputTokens: allRequests.map(d => d.success === false ? null : d.outputTokens),
+      inputTokens: allRequests.map(d => d.success === false ? null : (d.inputTokens || 0)),  // 每个请求的实际输入Token数
       inputTokensStats: inputTokensStats,  // 输入Token统计
-      requestTime: raw.map(d => d.totalRequestTime),
+      requestTime: allRequests.map(d => d.totalRequestTime || null),
       // 时间线数据
       timeline: timelineData,
       testStartTime: raw.length > 0 && raw[0].requestSendTime ? Math.min(...raw.map(d => d.requestSendTime)) : null,
@@ -801,6 +895,11 @@ function generateTokenSpeedHtml(results, chartData) {
   
   const r = results.tokenSpeed;
   const hasTimeline = chartData.tokenSpeed && chartData.tokenSpeed.timeline;
+  const tokenSource = getPrimaryTokenSource(results);
+  const failureSummary = getFailureSummary(results);
+  const summaryText = getReportSummary(results);
+  const tokenMetricCards = getTokenMetricCards(results);
+  const inputTokenDisplay = getInputTokenDisplay(results);
   
   // 计算总测试时间（用于甘特图显示）
   const totalTimeMs = r.config.totalTime || 0;
@@ -810,12 +909,25 @@ function generateTokenSpeedHtml(results, chartData) {
   
   return `
     <div class="card card-tokenspeed">
+      <div class="report-overview" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 20px; padding: 16px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px; font-weight: 600; color: #4a5568; margin-bottom: 8px; text-transform: uppercase;">结论摘要</div>
+          <div style="font-size: 14px; color: #2d3748; line-height: 1.7;">${escapeHtml(summaryText)}</div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; max-width: 340px;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #ebf8ff; color: #2b6cb0; font-size: 12px; font-weight: 600;">Token来源: ${escapeHtml(tokenSource)}</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: ${failureSummary.hasFailures ? '#fff5f5' : '#f0fff4'}; color: ${failureSummary.hasFailures ? '#c53030' : '#2f855a'}; font-size: 12px; font-weight: 600;">${escapeHtml(failureSummary.label)}</span>
+        </div>
+      </div>
+
       <!-- 指标说明 -->
       <div class="metric-explanation" style="background: #f0f4f8; color: #4a5568; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; border-left: 3px solid #4299e1;">
         <strong style="color: #2d3748;">📖 指标说明：</strong>
         <span style="margin-left: 8px;">
           <b>TTFT</b> = 首个生成 token 延迟 |
-          <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)
+          <b>TPS</b> = 每秒生成Token数 |
+          <b>服务端输出Tokens</b> = 服务端返回的 token 统计 |
+          <b>可见文本Tokens</b> = 本地根据可见 content 估算
         </span>
       </div>
       
@@ -832,10 +944,17 @@ function generateTokenSpeedHtml(results, chartData) {
               <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${r.config.url || 'N/A'}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${r.config.model || 'N/A'}</span></td></tr>
               ${r.config.sampleCount > 0 ? `<tr><td style="border-bottom: 1px solid #edf2f7;">Sample数量</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
+              <tr><td style="border-bottom: 1px solid #edf2f7;">并发数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.concurrency}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">采样次数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.samples}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">Token统计来源</td><td style="border-bottom: 1px solid #edf2f7;">${escapeHtml(tokenSource)}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">配置估算输入Tokens</td><td style="border-bottom: 1px solid #edf2f7;">${inputTokenDisplay?.configured ?? 'N/A'}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">实际请求输入Tokens（均值）</td><td style="border-bottom: 1px solid #edf2f7;">${inputTokenDisplay?.actualMean !== null && inputTokenDisplay?.actualMean !== undefined ? inputTokenDisplay.actualMean.toFixed(0) : 'N/A'}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">实际请求输入Tokens（范围）</td><td style="border-bottom: 1px solid #edf2f7;">${inputTokenDisplay?.actualMin !== null && inputTokenDisplay?.actualMax !== null ? `${inputTokenDisplay.actualMin.toFixed(0)} ~ ${inputTokenDisplay.actualMax.toFixed(0)}` : 'N/A'}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">最大输出Token数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.maxOutputTokens}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">并发模式</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'}</td></tr>
               <tr><td>总测试时间</td><td><strong style="color: #2d3748;">${totalTimeStr}</strong></td></tr>
             </table>
+            ${inputTokenDisplay?.driftHint ? `<div style="padding: 10px 12px; border-top: 1px solid #edf2f7; font-size: 12px; line-height: 1.6; color: #9c4221; background: #fffaf0;">${inputTokenDisplay.driftHint}</div>` : ''}
           </div>
           <div class="config-metrics">
             <div class="grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
@@ -852,16 +971,21 @@ function generateTokenSpeedHtml(results, chartData) {
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">首生成Token TTFT</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: ${failureSummary.hasFailures ? '#e53e3e' : '#38a169'};">${failureSummary.hasFailures ? failureSummary.total : 0}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">失败请求</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${(r.metrics.visibleTtft.mean / 1000).toFixed(2)}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">首可见Token TTFT</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
-                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.outputTokens.mean.toFixed(0)}</div>
-                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均总输出Tokens</div>
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${tokenMetricCards.primaryOutputValue}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">${tokenMetricCards.primaryOutputLabel}</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
-                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #d69e2e;">${r.metrics.visibleOutputTokens.mean.toFixed(0)}</div>
-                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均可见输出Tokens</div>
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #d69e2e;">${tokenMetricCards.secondaryOutputValue}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">${tokenMetricCards.secondaryOutputLabel}</div>
+                <div style="margin-top: 6px; font-size: 11px; color: #718096; line-height: 1.4;">${tokenMetricCards.secondaryOutputHint}</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #e53e3e;">${r.config.concurrency}</div>
@@ -908,19 +1032,19 @@ function generateTokenSpeedHtml(results, chartData) {
         </h3>
         <div class="charts-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #3182ce; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">📊 TPS 分布</h4>
+            <h4 style="color: #3182ce; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">📊 每请求生成速度</h4>
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="tpsChart"></canvas>
             </div>
           </div>
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #ed8936; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">⏱️ TTFT 分布</h4>
+            <h4 style="color: #ed8936; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">⏱️ 每请求首Token延迟</h4>
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="ttftChart"></canvas>
             </div>
           </div>
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #805ad5; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">🔄 输入/输出Token分布</h4>
+            <h4 style="color: #805ad5; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">🔄 输入与输出规模对比</h4>
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="outputChart"></canvas>
             </div>
@@ -934,4 +1058,16 @@ function generateTokenSpeedHtml(results, chartData) {
 
 export default {
   generateReport
+};
+
+export {
+  normalizeReportResults,
+  prepareChartData,
+  getReportDisplayTime,
+  formatSecondsFromMs,
+  getPrimaryTokenSource,
+  getFailureSummary,
+  getReportSummary,
+  getTokenMetricCards,
+  getInputTokenDisplay
 };
