@@ -48,7 +48,7 @@ API_KEY=your-api-key-here
 API_MODEL=gpt-4o-mini
 ```
 
-其他参数可以先保持 `.env.example` 默认值。
+其他参数可以先保持 `.env.example` 默认值。当前项目运行时直接读取 `.env` / 环境变量，并由 CLI 参数覆盖，不再依赖额外的 JSON 配置文件。
 
 ### 4. 先做一次配置检查
 
@@ -138,6 +138,14 @@ node src/index.js start [options]
 - 大上下文测试：`-c 2 -r 3 -n 2`
 - 降低接口压力：使用 `--concurrency-mode batch`
 
+## 指标口径
+
+- `平均 TPS`：加权平均值，计算方式为 `总输出 tokens / 总生成时间`
+- `单请求均值 TPS`：对每个请求的 TPS 做算术平均，适合观察样本离散程度
+- `整体吞吐 TPS`：`总输出 tokens / 整个测试窗口时间`，会受到并发调度与排队影响
+- `TTFT`：首个生成 token 延迟
+- `首可见 Token TTFT`：首个 `content` token 延迟，适合含 reasoning 输出的模型
+
 ## 样本文件
 
 当 `-n` 大于 `0` 时，程序会扫描 `data/` 目录下的 `.txt` 样本，并按文件名规则筛选可用样本。当前仓库里的样本主要位于 `data/samples/`，包含以下类别：
@@ -159,7 +167,6 @@ node src/index.js start [options]
 │   ├── llm-benchmark.js     # 测试执行核心
 │   ├── context-generator.js # Token 统计与上下文处理
 │   ├── http-client.js       # HTTP 请求客户端
-│   ├── config.js            # 配置加载
 │   └── reporter.js          # 报告生成
 ├── data/                    # Prompt 与样本目录
 │   └── samples/             # 大上下文测试样本

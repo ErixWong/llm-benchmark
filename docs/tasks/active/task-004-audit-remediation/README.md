@@ -2,7 +2,7 @@
 
 ## 目标
 
-根据最新代码审计结果，修复影响 benchmark 结果可信度、配置行为一致性和维护性的核心问题。
+根据最新代码审计结果，修复影响 benchmark 结果可信度、配置行为一致性和维护性的核心问题，并收敛回以 `.env` / 环境变量为主的单一运行配置入口。
 
 ## 范围
 
@@ -18,7 +18,6 @@
 - `src/index.js`
 - `src/http-client.js`
 - `src/reporter.js`
-- `src/config.js`
 - `tests/*.test.js`
 - `.env.example`
 - `CHANGELOG.md`
@@ -35,7 +34,7 @@
 
 ## 状态
 
-⏳ 进行中
+✅ 已完成
 
 ## 创建日期
 

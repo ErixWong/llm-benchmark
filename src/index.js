@@ -14,12 +14,10 @@ import { pathToFileURL } from 'url';
 import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
-import { loadConfig } from './config.js';
 import { normalizeConcurrencyMode } from './cli-options.js';
 
 // 加载环境变量
 dotenv.config();
-const appConfig = loadConfig();
 
 // 提示词模板 - 用于大样本测试
 const PROMPT_TEMPLATE = '请从下列样本中选取一个进行仿写扩写。\n\n';
@@ -127,23 +125,23 @@ function registerStartCommand(cliProgram) {
   cliProgram
     .command('start', { isDefault: true })
     .description('运行Token生成速度测试 (默认命令)')
-    .option('-c, --concurrency <number>', '并发数', String(appConfig.benchmark?.concurrency ?? 4))
-    .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', String(appConfig.benchmark?.rounds ?? 5))
-    .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', String(appConfig.benchmark?.sampleCount ?? 0))
-    .option('-m, --max-output <number>', '最大输出Token数', String(appConfig.benchmark?.maxOutputTokens ?? 30000))
-    .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', appConfig.benchmark?.concurrencyMode || 'pipeline')
-    .option('-t, --timeout <seconds>', '请求超时时间(秒)', String(Math.floor((appConfig.benchmark?.timeout ?? 90000) / 1000)))
+    .option('-c, --concurrency <number>', '并发数', process.env.DEFAULT_CONCURRENCY || '4')
+    .option('-r, --rounds <number>', '采样轮数，总采样数 = 并发数 × 轮数', process.env.ROUNDS || '5')
+    .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', process.env.SAMPLE_COUNT || '0')
+    .option('-m, --max-output <number>', '最大输出Token数', process.env.MAX_OUTPUT_TOKENS || '30000')
+    .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', process.env.CONCURRENCY_MODE || 'pipeline')
+    .option('-t, --timeout <seconds>', '请求超时时间(秒)', process.env.DEFAULT_TIMEOUT ? String(parseInt(process.env.DEFAULT_TIMEOUT, 10) / 1000) : '90')
     .option('-u, --url <url>', 'API端点URL')
     .option('-k, --api-key <key>', 'API密钥')
     .option('--model <model>', '模型名称')
     .option('--system-prompt <prompt>', '系统提示词')
-    .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || appConfig.report?.outputDir || './results')
+    .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
     .option('-q, --quiet', '静默模式，仅输出最终结果')
     .option('--dry-run', '仅输出测试配置，不实际执行请求')
     .action(async (options) => {
-    const url = options.url || process.env.API_BASE_URL || appConfig.api?.baseUrl;
-    const apiKey = options.apiKey || process.env.API_KEY || appConfig.api?.apiKey;
-    const model = options.model || process.env.API_MODEL || appConfig.api?.model;
+    const url = options.url || process.env.API_BASE_URL;
+    const apiKey = options.apiKey || process.env.API_KEY;
+    const model = options.model || process.env.API_MODEL;
     const quiet = options.quiet || false;
     const dryRun = options.dryRun || false;
     
@@ -203,7 +201,7 @@ function registerStartCommand(cliProgram) {
     }
     
     // 获取报告标题
-    const reportTitle = process.env.REPORT_TITLE || appConfig.report?.title || model;
+    const reportTitle = process.env.REPORT_TITLE || model;
     
     // 创建输入生成器
     const generateInputText = createInputGenerator(sampleCount, sampleFiles);
@@ -288,4 +286,4 @@ if (process.argv[1]) {
   }
 }
 
-export { normalizeConcurrencyMode, registerStartCommand, appConfig };
+export { normalizeConcurrencyMode, registerStartCommand };

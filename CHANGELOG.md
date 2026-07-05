@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 报告生成器支持直接接收 benchmark 结果对象，减少隐式包装契约
 
 ### Changed
-- `src/config.js` / `config/default.json` 收敛为当前 CLI 实际支持的 benchmark 配置
+- 移除运行时 `config/default.json` / `src/config.js` 配置层，回到 `.env` / 环境变量 + CLI 参数的单一入口
 - `scripts/adjust-tokens.js` 改为递归扫描 `data/samples/` 当前目录结构
 - `.env.example` 移除会污染 `REPORT_TITLE` 的行尾注释写法
 
