@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect } from 'vitest';
 import { measureTokenSpeed, processTokenSpeedResult } from '../src/llm-benchmark.js';
+import { createSimplePromptVariant } from '../src/default-prompts.js';
 
 function createMockClient(chunks) {
   return {
@@ -18,6 +19,19 @@ function createMockClient(chunks) {
 }
 
 describe('llm-benchmark', () => {
+  describe('default prompt generation', () => {
+    it('should generate bounded non-sample prompts with output limit guidance', () => {
+      const prompts = Array.from({ length: 8 }, () => createSimplePromptVariant());
+
+      for (const prompt of prompts) {
+        expect(prompt).toContain('1000 token 以内');
+        expect(prompt.length).toBeGreaterThan(20);
+      }
+
+      expect(new Set(prompts).size).toBeGreaterThan(1);
+    });
+  });
+
   describe('measureTokenSpeed', () => {
     it('should use usage token counts when api returns usage', async () => {
       const result = await measureTokenSpeed(

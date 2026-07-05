@@ -15,6 +15,7 @@ import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { normalizeConcurrencyMode } from './cli-options.js';
+import { createSimplePromptVariant } from './default-prompts.js';
 
 // 加载环境变量
 dotenv.config();
@@ -43,9 +44,6 @@ function matchesSamplePattern(filename) {
   // 使用默认规则
   return DEFAULT_SAMPLE_PATTERNS.some(pattern => pattern.test(filename));
 }
-
-// 简单默认提示词 - 用于非样本测试
-const SIMPLE_PROMPT = '请写一篇关于人工智能发展历程的文章，包括重要的里程碑事件和未来展望。';
 
 program
   .name('llm-benchmark')
@@ -114,10 +112,10 @@ function createInputGenerator(sampleCount, sampleFiles) {
       if (process.env.DEBUG) {
         console.log(chalk.gray(`选中样本: ${selectedFiles.join(', ')}`));
       }
-      
+
       return PROMPT_TEMPLATE + contents.join('\n\n---\n\n');
     }
-    return SIMPLE_PROMPT;
+    return createSimplePromptVariant();
   };
 }
 
@@ -286,4 +284,4 @@ if (process.argv[1]) {
   }
 }
 
-export { normalizeConcurrencyMode, registerStartCommand };
+export { normalizeConcurrencyMode, registerStartCommand, createInputGenerator };
