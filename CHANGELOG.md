@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- 修正 Token 速度统计口径，区分加权平均 TPS、单请求均值和整体吞吐 TPS
+- 将 TTFT 区分为首个生成 token 与首个可见 token，并修复时间线起点偏移
+- 统一输出 token 回退统计口径，避免 reasoning token 在不同路径下不可比
+- 非法 `--concurrency-mode` 现在直接报错，不再静默降级
+- 报告生成器支持直接接收 benchmark 结果对象，减少隐式包装契约
+
+### Changed
+- `src/config.js` / `config/default.json` 收敛为当前 CLI 实际支持的 benchmark 配置
+- `scripts/adjust-tokens.js` 改为递归扫描 `data/samples/` 当前目录结构
+- `.env.example` 移除会污染 `REPORT_TITLE` 的行尾注释写法
+
+### Tests
+- 为 benchmark 聚合统计、token 计数和并发模式校验补充单元测试
+
 ## [1.0.3] - 2026-03-13
 
 ### Added

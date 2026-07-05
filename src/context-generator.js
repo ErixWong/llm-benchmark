@@ -3,7 +3,8 @@
  * 精确控制输入token数量
  */
 
-import { encode, decode } from 'gpt-tokenizer';
+import { encode, decode, countTokens as countTextTokenizerTokens } from 'gpt-tokenizer';
+import { countTokens as countChatTokenizerTokens } from 'gpt-tokenizer/model/gpt-3.5-turbo';
 
 /**
  * 生成精确token数量的测试提示词
@@ -233,24 +234,20 @@ function adjustToExactTokens(text, targetTokens) {
  * @returns {number} token数量
  */
 export function countMessagesTokens(messages) {
-  // OpenAI消息格式的token计算
-  // 每条消息约有格式开销
-  let totalTokens = 0;
+  return countChatTokenizerTokens(messages);
+}
 
-  for (const message of messages) {
-    // 角色开销
-    totalTokens += 4; // <|start|>role<|message|>
-    
-    // 内容token
-    if (message.content) {
-      totalTokens += encode(message.content).length;
-    }
+/**
+ * 计算纯文本的token数量
+ * @param {string} text - 文本内容
+ * @returns {number} token数量
+ */
+export function countTextTokens(text) {
+  if (!text) {
+    return 0;
   }
 
-  // 消息数组的整体开销
-  totalTokens += 3; // <|start|>assistant<|message|>
-
-  return totalTokens;
+  return countTextTokenizerTokens(text);
 }
 
 /**
@@ -293,6 +290,7 @@ export default {
   generateContext,
   generateExactTokenText,
   countMessagesTokens,
+  countTextTokens,
   estimateTokens,
   validateContext
 };

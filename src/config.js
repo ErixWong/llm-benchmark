@@ -53,48 +53,25 @@ function getDefaultConfig() {
       baseUrl: process.env.API_BASE_URL || '',
       apiKey: process.env.API_KEY || '',
       model: process.env.API_MODEL || '',
-      timeout: 30000,
+      timeout: parseInt(process.env.DEFAULT_TIMEOUT, 10) || 90000,
       headers: {
         'Content-Type': 'application/json'
       }
     },
-    test: {
-      concurrency: {
-        levels: [1, 5, 10, 20, 50, 100],
-        duration: 60,
-        rampUp: 10,
-        samples: 3
-      },
-      tokenSpeed: {
-        inputTokens: [100, 500, 1000, 2000],
-        maxOutputTokens: 500,
-        concurrency: [1, 5, 10],
-        samples: 10,
-        warmupRequests: 3
-      },
-      stress: {
-        startConcurrency: 10,
-        endConcurrency: 500,
-        step: 10,
-        duration: 300,
-        rampUp: 30
-      }
+    benchmark: {
+      concurrency: parseInt(process.env.DEFAULT_CONCURRENCY, 10) || 4,
+      rounds: parseInt(process.env.ROUNDS, 10) || 5,
+      sampleCount: parseInt(process.env.SAMPLE_COUNT, 10) || 0,
+      maxOutputTokens: parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 30000,
+      concurrencyMode: process.env.CONCURRENCY_MODE || 'pipeline',
+      timeout: parseInt(process.env.DEFAULT_TIMEOUT, 10) || 90000,
+      warmupRequests: 1
     },
     report: {
       outputDir: './results',
       formats: ['json', 'html', 'markdown'],
       includeRawData: true,
-      percentiles: [50, 75, 90, 95, 99]
-    },
-    thresholds: {
-      responseTime: {
-        p50: 500,
-        p90: 1000,
-        p99: 2000
-      },
-      errorRate: 1,
-      minRps: 10,
-      minTps: 10
+      title: process.env.REPORT_TITLE || ''
     }
   };
 }

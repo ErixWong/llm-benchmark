@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeApiUrl, validateParams, tokenSpeedTestRules } from '../src/http-client.js';
+import { normalizeConcurrencyMode } from '../src/cli-options.js';
 
 describe('http-client', () => {
   describe('normalizeApiUrl', () => {
@@ -56,6 +57,17 @@ describe('http-client', () => {
       }, tokenSpeedTestRules);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe('normalizeConcurrencyMode', () => {
+    it('should accept supported modes', () => {
+      expect(normalizeConcurrencyMode('batch')).toBe('batch');
+      expect(normalizeConcurrencyMode('pipeline')).toBe('pipeline');
+    });
+
+    it('should reject unsupported modes', () => {
+      expect(() => normalizeConcurrencyMode('parallel')).toThrow(/batch 或 pipeline/);
     });
   });
 });

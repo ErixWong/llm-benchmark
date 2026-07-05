@@ -346,13 +346,9 @@ export const tokenSpeedTestRules = {
   model: { required: false, type: 'string' }
 };
 
-// 导出默认客户端
-export const httpClient = createHttpClient();
-
 export default {
   createHttpClient,
   validateParams,
   concurrencyTestRules,
-  tokenSpeedTestRules,
-  httpClient
+  tokenSpeedTestRules
 };

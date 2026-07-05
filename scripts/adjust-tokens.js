@@ -7,9 +7,9 @@
 
 import { encode, decode } from 'gpt-tokenizer';
 import { readdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 
-const dataDir = join(process.cwd(), 'data');
+const dataDir = join(process.cwd(), 'data', 'samples');
 const TARGET_MIN = 7700;
 const TARGET_MAX = 7900;
 
@@ -66,10 +66,27 @@ const FILLER_TEMPLATE = `
 *本节内容补充了相关的最佳实践、常见问题和发展趋势，帮助读者更好地理解和应用所学知识。*
 `;
 
+function collectSampleFiles(dir) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectSampleFiles(fullPath));
+      continue;
+    }
+
+    if (entry.isFile() && entry.name.startsWith('sample-8k') && entry.name.endsWith('.txt')) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
 // 获取所有sample文件
-const files = readdirSync(dataDir)
-  .filter(f => f.startsWith('sample-8k') && f.endsWith('.txt'))
-  .sort();
+const files = collectSampleFiles(dataDir).sort();
 
 console.log('样本文件Token调整报告\n');
 console.log('目标范围: 7,700 - 7,900 tokens\n');
@@ -78,10 +95,10 @@ console.log('文件名'.padEnd(25) + '当前Token'.padStart(12) + '目标Token'.
 console.log('-'.repeat(70));
 
 for (const file of files) {
-  const filePath = join(dataDir, file);
-  const content = readFileSync(filePath, 'utf-8');
+  const content = readFileSync(file, 'utf-8');
   const tokens = encode(content);
   const currentTokens = tokens.length;
+  const displayName = relative(dataDir, file);
   
   let action = '';
   let newTokens = currentTokens;
@@ -96,7 +113,7 @@ for (const file of files) {
     action = '符合要求';
   }
   
-  console.log(file.padEnd(25) + currentTokens.toString().padStart(12) + newTokens.toString().padStart(12) + action.padStart(15));
+  console.log(displayName.padEnd(25) + currentTokens.toString().padStart(12) + newTokens.toString().padStart(12) + action.padStart(15));
 }
 
 console.log('='.repeat(70));
@@ -106,20 +123,20 @@ console.log('\n调整建议:');
 console.log('-'.repeat(70));
 
 for (const file of files) {
-  const filePath = join(dataDir, file);
-  const content = readFileSync(filePath, 'utf-8');
+  const content = readFileSync(file, 'utf-8');
   const tokens = encode(content);
   const currentTokens = tokens.length;
+  const displayName = relative(dataDir, file);
   
   if (currentTokens < TARGET_MIN) {
     const needed = TARGET_MIN - currentTokens;
     const fillerTokens = encode(FILLER_TEMPLATE).length;
     const repetitions = Math.ceil(needed / fillerTokens);
-    console.log(`\n${file}: 需要增加 ${needed} tokens`);
+    console.log(`\n${displayName}: 需要增加 ${needed} tokens`);
     console.log(`  建议: 在文件末尾添加 ${repetitions} 次补充内容模板`);
   } else if (currentTokens > TARGET_MAX) {
     const excess = currentTokens - TARGET_MAX;
-    console.log(`\n${file}: 需要减少 ${excess} tokens`);
+    console.log(`\n${displayName}: 需要减少 ${excess} tokens`);
     console.log(`  建议: 删减末尾约 ${Math.round(excess * 4)} 个字符的内容`);
   }
 }
@@ -133,10 +150,10 @@ if (process.argv.includes('--apply')) {
   console.log('\n开始执行调整...\n');
   
   for (const file of files) {
-    const filePath = join(dataDir, file);
-    let content = readFileSync(filePath, 'utf-8');
+    let content = readFileSync(file, 'utf-8');
     const tokens = encode(content);
     const currentTokens = tokens.length;
+    const displayName = relative(dataDir, file);
     
     let newContent = content;
     let newTokens = currentTokens;
@@ -171,10 +188,10 @@ if (process.argv.includes('--apply')) {
     newTokens = encode(newContent).length;
     
     if (newContent !== content) {
-      writeFileSync(filePath, newContent, 'utf-8');
-      console.log(`${file}: ${currentTokens} -> ${newTokens} tokens`);
+      writeFileSync(file, newContent, 'utf-8');
+      console.log(`${displayName}: ${currentTokens} -> ${newTokens} tokens`);
     } else {
-      console.log(`${file}: 无需调整 (${currentTokens} tokens)`);
+      console.log(`${displayName}: 无需调整 (${currentTokens} tokens)`);
     }
   }
   

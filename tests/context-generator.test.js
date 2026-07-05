@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { generateExactTokenText, countMessagesTokens, validateContext } from '../src/context-generator.js';
+import { countTokens as tokenizerCountTokens } from 'gpt-tokenizer';
+import { countTokens as chatTokenizerCountTokens } from 'gpt-tokenizer/model/gpt-3.5-turbo';
+import { generateExactTokenText, countMessagesTokens, countTextTokens, validateContext } from '../src/context-generator.js';
 
 describe('context-generator', () => {
   describe('generateExactTokenText', () => {
@@ -45,6 +47,27 @@ describe('context-generator', () => {
         { role: 'user', content: 'Hello' }
       ]);
       expect(tokens).toBeGreaterThan(countMessagesTokens([{ role: 'user', content: 'Hello' }]));
+    });
+
+    it('should match tokenizer chat counting', () => {
+      const messages = [
+        { role: 'system', content: 'You are a helpful assistant' },
+        { role: 'user', content: 'Hello world' }
+      ];
+
+      expect(countMessagesTokens(messages)).toBe(chatTokenizerCountTokens(messages));
+    });
+  });
+
+  describe('countTextTokens', () => {
+    it('should count plain text tokens', () => {
+      const text = 'hello world';
+      expect(countTextTokens(text)).toBe(tokenizerCountTokens(text));
+    });
+
+    it('should return zero for empty text', () => {
+      expect(countTextTokens('')).toBe(0);
+      expect(countTextTokens(null)).toBe(0);
     });
   });
 

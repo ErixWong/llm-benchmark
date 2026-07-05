@@ -5,7 +5,7 @@
 
 import chalk from 'chalk';
 import ora from 'ora';
-import { generateContext, countMessagesTokens, validateContext } from './context-generator.js';
+import { generateContext, countMessagesTokens, countTextTokens, validateContext } from './context-generator.js';
 import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, DEFAULT_TIMEOUT } from './http-client.js';
 
 /**
@@ -193,7 +193,6 @@ export async function runLlmBenchmarkTest(options) {
     const activePromises = new Map(); // 使用 Map 存储活跃请求
     
     const runRequest = async (requestIndex) => {
-      const requestSendTime = Date.now();
       const messages = await getMessagesForRequest(requestIndex);
       
       try {
@@ -207,8 +206,8 @@ export async function runLlmBenchmarkTest(options) {
         return {
           ...result,
           requestIndex,
-          requestSendTime,
-          responseReceiveTime: Date.now()
+          requestSendTime: result.requestSendTime,
+          responseReceiveTime: result.responseReceiveTime
         };
       } catch (error) {
         completed++;
@@ -221,8 +220,8 @@ export async function runLlmBenchmarkTest(options) {
           success: false,
           error: error.message,
           requestIndex,
-          requestSendTime,
-          responseReceiveTime: Date.now()
+          requestSendTime: error.requestStart ?? Date.now(),
+          responseReceiveTime: error.requestEnd ?? Date.now()
         };
       }
     };
@@ -270,8 +269,6 @@ export async function runLlmBenchmarkTest(options) {
       const batchPromises = [];
       for (let i = 0; i < batchSize; i++) {
         const currentRequestIndex = batchStartIndex + i;
-        const requestSendTime = Date.now();
-        
         batchPromises.push(
           (async () => {
             const messages = await getMessagesForRequest(currentRequestIndex);
@@ -282,27 +279,27 @@ export async function runLlmBenchmarkTest(options) {
               
               logRequestCompletion(completed, samples, result, false, currentRequestIndex + 1);
               
-              return {
-                ...result,
-                requestIndex: currentRequestIndex,
-                requestSendTime,
-                responseReceiveTime: Date.now()
-              };
-            } catch (error) {
+                return {
+                  ...result,
+                  requestIndex: currentRequestIndex,
+                  requestSendTime: result.requestSendTime,
+                  responseReceiveTime: result.responseReceiveTime
+                };
+              } catch (error) {
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
               logRequestCompletion(completed, samples, { error: error.message }, true, currentRequestIndex + 1);
               
-              return {
-                success: false,
-                error: error.message,
-                requestIndex: currentRequestIndex,
-                requestSendTime,
-                responseReceiveTime: Date.now()
-              };
-            }
-          })()
+                return {
+                  success: false,
+                  error: error.message,
+                  requestIndex: currentRequestIndex,
+                  requestSendTime: error.requestStart ?? Date.now(),
+                  responseReceiveTime: error.requestEnd ?? Date.now()
+                };
+              }
+            })()
         );
       }
       
@@ -313,7 +310,6 @@ export async function runLlmBenchmarkTest(options) {
     // 顺序模式：逐个执行，记录时间戳
     for (let i = 0; i < samples; i++) {
       spinner.text = `执行Token速度测试 (${i + 1}/${samples})`;
-      const requestSendTime = Date.now();
       const messages = await getMessagesForRequest(i);
       
       try {
@@ -324,8 +320,8 @@ export async function runLlmBenchmarkTest(options) {
         results.push({
           ...result,
           requestIndex: i,
-          requestSendTime,
-          responseReceiveTime: Date.now()
+          requestSendTime: result.requestSendTime,
+          responseReceiveTime: result.responseReceiveTime
         });
       } catch (error) {
         logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1);
@@ -334,8 +330,8 @@ export async function runLlmBenchmarkTest(options) {
           success: false,
           error: error.message,
           requestIndex: i,
-          requestSendTime,
-          responseReceiveTime: Date.now()
+          requestSendTime: error.requestStart ?? Date.now(),
+          responseReceiveTime: error.requestEnd ?? Date.now()
         });
       }
     }
@@ -401,8 +397,9 @@ function logRequestCompletion(current, total, result, isError = false, requestNu
 async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens) {
   const requestStart = Date.now();
   let firstTokenTime = null;
-  let tokens = [];
-  let outputText = '';  // 用于回退计算（只包含content，不含reasoning）
+  let firstVisibleTokenTime = null;
+  let visibleOutputText = '';
+  let allOutputText = '';
 
   try {
     // 构造请求 - 使用流式响应，使用带重试的 httpClient
@@ -442,27 +439,21 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
               const content = delta.content || '';
               const reasoning = delta.reasoning || '';
               
-              // TTFT只计算实际内容的首个Token，不包含推理过程(reasoning)
-              // reasoning是模型的内部思考，用户看不到，所以不应该计入TTFT
-              if (content) {
-                if (!firstTokenTime) {
-                  firstTokenTime = Date.now();
-                }
-                tokens.push({
-                  time: Date.now(),
-                  content: content,
-                  type: 'content'
-                });
-                outputText += content;
-              }
-              // 推理内容单独处理，不计入TTFT，不计入outputText
-              if (reasoning) {
-                tokens.push({
-                  time: Date.now(),
-                  content: reasoning,
-                  type: 'reasoning'
-                });
-              }
+               // TTFT 记录真正的首个生成 token；首个可见内容单独记录。
+               if ((content || reasoning) && !firstTokenTime) {
+                 firstTokenTime = Date.now();
+               }
+
+               if (content) {
+                 if (!firstVisibleTokenTime) {
+                   firstVisibleTokenTime = Date.now();
+                 }
+                 visibleOutputText += content;
+                 allOutputText += content;
+               }
+               if (reasoning) {
+                 allOutputText += reasoning;
+               }
             } catch (e) {
               // 记录解析错误但不中断处理
               if (process.env.DEBUG) {
@@ -477,31 +468,40 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
         const requestEnd = Date.now();
         const totalRequestTime = requestEnd - requestStart;
         const ttft = firstTokenTime ? firstTokenTime - requestStart : null;
-        // 优先使用API返回的token数量，回退到tokenizer计算
+        const visibleTtft = firstVisibleTokenTime ? firstVisibleTokenTime - requestStart : null;
+        // 优先使用API返回的 token 数量，回退时按所有生成文本统计，避免 reasoning 口径漂移。
         const outputTokens = apiUsage?.completion_tokens 
-          ?? countMessagesTokens([{ role: 'assistant', content: outputText }]);
+          ?? countTextTokens(allOutputText);
+        const visibleOutputTokens = countTextTokens(visibleOutputText);
         // 输入token优先使用API返回值
         const inputTokensActual = apiUsage?.prompt_tokens 
           ?? countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
         const tps = outputTokens > 0 && generationTime > 0
-          ? (outputTokens / (generationTime / 1000)).toFixed(2)
+          ? outputTokens / (generationTime / 1000)
           : 0;
 
         resolve({
           success: true,
           totalRequestTime,
           ttft,
+          visibleTtft,
           outputTokens,
+          visibleOutputTokens,
           inputTokens: inputTokensActual,
           generationTime,
-          tps: parseFloat(tps),
-          outputText,
-          tokenSource: apiUsage ? 'api' : 'tokenizer'  // 标记token来源
+          tps,
+          outputText: visibleOutputText,
+          allOutputText,
+          tokenSource: apiUsage ? 'api' : 'tokenizer',
+          requestSendTime: requestStart,
+          responseReceiveTime: requestEnd
         });
       });
 
       response.data.on('error', (error) => {
+        error.requestStart = requestStart;
+        error.requestEnd = Date.now();
         reject(error);
       });
     });
@@ -524,6 +524,8 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
       console.log(chalk.red(`\n  详细错误: HTTP ${error.response.status}`));
       console.log(chalk.red(`  响应数据: ${errorDetail.substring(0, 500)}`));
     }
+    error.requestStart = requestStart;
+    error.requestEnd = Date.now();
     // 如果流式请求失败，直接抛出错误
     throw error;
   }
@@ -552,13 +554,18 @@ function processTokenSpeedResult(results, config) {
 
   const tpsValues = successResults.map(r => r.tps);
   const ttftValues = successResults.map(r => r.ttft).filter(v => v !== null);
+  const visibleTtftValues = successResults.map(r => r.visibleTtft).filter(v => v !== null);
   const outputTokensValues = successResults.map(r => r.outputTokens);
+  const visibleOutputTokensValues = successResults.map(r => r.visibleOutputTokens ?? 0);
   const requestTimeValues = successResults.map(r => r.totalRequestTime);
+  const generationTimeValues = successResults.map(r => r.generationTime);
 
   // 计算整体吞吐量TPS = 总输出tokens / 总测试时间(秒)
   const totalOutputTokens = outputTokensValues.reduce((a, b) => a + b, 0);
   const totalTimeSeconds = config.totalTime / 1000;
   const throughputTps = totalTimeSeconds > 0 ? totalOutputTokens / totalTimeSeconds : 0;
+  const totalGenerationTimeSeconds = generationTimeValues.reduce((sum, value) => sum + value, 0) / 1000;
+  const weightedMeanTps = totalGenerationTimeSeconds > 0 ? totalOutputTokens / totalGenerationTimeSeconds : 0;
 
   return {
     type: 'token-speed',
@@ -567,30 +574,44 @@ function processTokenSpeedResult(results, config) {
     success: true,
     metrics: {
       tps: {
-        mean: average(tpsValues),
-        min: Math.min(...tpsValues),
-        max: Math.max(...tpsValues),
+        mean: weightedMeanTps,
+        requestMean: average(tpsValues),
+        min: safeMin(tpsValues),
+        max: safeMax(tpsValues),
         median: median(tpsValues),
         values: tpsValues
       },
       throughputTps,  // 整体吞吐量TPS
       ttft: {
         mean: average(ttftValues),
-        min: Math.min(...ttftValues),
-        max: Math.max(...ttftValues),
+        min: safeMin(ttftValues),
+        max: safeMax(ttftValues),
         median: median(ttftValues),
         values: ttftValues
       },
+      visibleTtft: {
+        mean: average(visibleTtftValues),
+        min: safeMin(visibleTtftValues),
+        max: safeMax(visibleTtftValues),
+        median: median(visibleTtftValues),
+        values: visibleTtftValues
+      },
       outputTokens: {
         mean: average(outputTokensValues),
-        min: Math.min(...outputTokensValues),
-        max: Math.max(...outputTokensValues),
+        min: safeMin(outputTokensValues),
+        max: safeMax(outputTokensValues),
         median: median(outputTokensValues)
+      },
+      visibleOutputTokens: {
+        mean: average(visibleOutputTokensValues),
+        min: safeMin(visibleOutputTokensValues),
+        max: safeMax(visibleOutputTokensValues),
+        median: median(visibleOutputTokensValues)
       },
       requestTime: {
         mean: average(requestTimeValues),
-        min: Math.min(...requestTimeValues),
-        max: Math.max(...requestTimeValues),
+        min: safeMin(requestTimeValues),
+        max: safeMax(requestTimeValues),
         median: median(requestTimeValues)
       }
     },
@@ -629,6 +650,14 @@ function median(arr) {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function safeMin(arr) {
+  return arr.length > 0 ? Math.min(...arr) : 0;
+}
+
+function safeMax(arr) {
+  return arr.length > 0 ? Math.max(...arr) : 0;
+}
+
 /**
  * 打印Token速度测试摘要
  * @param {Object} result - 处理后的结果
@@ -643,7 +672,8 @@ function printTokenSpeedSummary(result) {
   }
 
   console.log(chalk.cyan('\nToken生成速度 (TPS):'));
-  console.log(`  平均: ${formatTps(result.metrics.tps.mean)}`);
+  console.log(`  平均(加权): ${formatTps(result.metrics.tps.mean)}`);
+  console.log(`  单请求均值: ${formatTps(result.metrics.tps.requestMean)}`);
   console.log(`  中位数: ${formatTps(result.metrics.tps.median)}`);
   console.log(`  最小: ${formatTps(result.metrics.tps.min)}`);
   console.log(`  最大: ${formatTps(result.metrics.tps.max)}`);
@@ -703,4 +733,11 @@ function formatLatency(ms) {
 
 export default {
   runLlmBenchmarkTest
+};
+
+export {
+  measureTokenSpeed,
+  processTokenSpeedResult,
+  average,
+  median
 };
