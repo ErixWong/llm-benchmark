@@ -68,6 +68,85 @@ describe('llm-benchmark', () => {
       expect(result.inputTokens).toBe(23);
       expect(result.outputTokens).toBe(8);
     });
+
+    it('should treat reasoning_content as first token data', async () => {
+      const result = await measureTokenSpeed(
+        createMockClient([
+          'data: {"choices":[{"delta":{"reasoning_content":"先想一想"}}]}\n',
+          'data: {"choices":[{"delta":{"content":"最终答案"}}]}\n',
+          'data: {"timings":{"prompt_n":10,"predicted_n":6}}\n'
+        ]),
+        'https://api.example.com',
+        'test-agent',
+        'test-model',
+        [{ role: 'user', content: 'hello world' }],
+        32
+      );
+
+      expect(result.ttft).not.toBeNull();
+      expect(result.visibleTtft).not.toBeNull();
+      expect(result.ttft).toBeLessThanOrEqual(result.visibleTtft);
+      expect(result.outputText).toBe('最终答案');
+      expect(result.allOutputText).toBe('先想一想最终答案');
+    });
+
+    it('should still use reasoning_content when reasoning is an empty container', async () => {
+      const result = await measureTokenSpeed(
+        createMockClient([
+          'data: {"choices":[{"delta":{"reasoning":[],"reasoning_content":"先返回思考"}}]}\n',
+          'data: {"choices":[{"delta":{"content":"最终答案"}}]}\n',
+          'data: {"timings":{"prompt_n":10,"predicted_n":6}}\n'
+        ]),
+        'https://api.example.com',
+        'test-agent',
+        'test-model',
+        [{ role: 'user', content: 'hello world' }],
+        32
+      );
+
+      expect(result.ttft).not.toBeNull();
+      expect(result.visibleTtft).not.toBeNull();
+      expect(result.ttft).toBeLessThanOrEqual(result.visibleTtft);
+      expect(result.allOutputText).toBe('先返回思考最终答案');
+    });
+
+    it('should support array content deltas as visible output', async () => {
+      const result = await measureTokenSpeed(
+        createMockClient([
+          'data: {"choices":[{"delta":{"content":[{"type":"output_text","text":"Hello"},{"type":"output_text","text":" world"}]}}]}\n',
+          'data: {"usage":{"prompt_tokens":9,"completion_tokens":2}}\n'
+        ]),
+        'https://api.example.com',
+        'test-agent',
+        'test-model',
+        [{ role: 'user', content: 'hello world' }],
+        32
+      );
+
+      expect(result.ttft).not.toBeNull();
+      expect(result.visibleTtft).not.toBeNull();
+      expect(result.outputText).toBe('Hello world');
+      expect(result.allOutputText).toBe('Hello world');
+    });
+
+    it('should support array content deltas that use delta fields', async () => {
+      const result = await measureTokenSpeed(
+        createMockClient([
+          'data: {"choices":[{"delta":{"content":[{"type":"output_text_delta","delta":"Hello"},{"type":"output_text_delta","delta":" world"}]}}]}\n',
+          'data: {"usage":{"prompt_tokens":9,"completion_tokens":2}}\n'
+        ]),
+        'https://api.example.com',
+        'test-agent',
+        'test-model',
+        [{ role: 'user', content: 'hello world' }],
+        32
+      );
+
+      expect(result.ttft).not.toBeNull();
+      expect(result.visibleTtft).not.toBeNull();
+      expect(result.outputText).toBe('Hello world');
+      expect(result.allOutputText).toBe('Hello world');
+    });
   });
 
   describe('processTokenSpeedResult', () => {

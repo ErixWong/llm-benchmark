@@ -422,6 +422,34 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
   let visibleOutputText = '';
   let allOutputText = '';
 
+  const normalizeDeltaText = (value) => {
+    if (!value) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value
+        .map(item => normalizeDeltaText(item))
+        .join('');
+    }
+
+    if (typeof value === 'object') {
+      return normalizeDeltaText(
+        value.text
+        ?? value.delta
+        ?? value.content
+        ?? value.reasoning
+        ?? value.reasoning_content
+      );
+    }
+
+    return '';
+  };
+
   const extractApiUsage = (parsed) => {
     if (parsed?.usage?.prompt_tokens !== undefined || parsed?.usage?.completion_tokens !== undefined) {
       return {
@@ -461,8 +489,11 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
         usageRef = extractedUsage;
       }
 
-      const content = delta.content || '';
-      const reasoning = delta.reasoning || '';
+      const content = normalizeDeltaText(delta.content);
+      const reasoning = [
+        normalizeDeltaText(delta.reasoning),
+        normalizeDeltaText(delta.reasoning_content)
+      ].join('');
 
       if ((content || reasoning) && !firstTokenTime) {
         firstTokenTime = Date.now();
