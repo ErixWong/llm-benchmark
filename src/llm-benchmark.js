@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { generateContext, countMessagesTokens, countTextTokens, validateContext } from './context-generator.js';
 import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, DEFAULT_TIMEOUT } from './http-client.js';
+import { createSimplePromptVariant } from './default-prompts.js';
 
 /**
  * 运行LLM基准测试
@@ -169,14 +170,9 @@ export async function runLlmBenchmarkTest(options) {
     const warmupSpinner = ora(`执行 ${warmupRequests} 次预热请求...`).start();
     for (let i = 0; i < warmupRequests; i++) {
       try {
-        // 动态生成或使用预设消息
-        let warmupMessages;
-        if (useDynamicGeneration) {
-          const warmupText = await withInputGenerationLimit(() => generateInputText());
-          warmupMessages = [{ role: 'user', content: warmupText }];
-        } else {
-          warmupMessages = contextMessagesList[0];
-        }
+        const warmupMessages = useDynamicGeneration
+          ? [{ role: 'user', content: createSimplePromptVariant() }]
+          : contextMessagesList[0];
         await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens);
       } catch (error) {
         // 检查是否是HTTP错误（4xx/5xx），如果是则停止测试
@@ -420,6 +416,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
   let firstTokenTime = null;
   let firstVisibleTokenTime = null;
   let visibleOutputText = '';
+  let reasoningOutputText = '';
   let allOutputText = '';
 
   const normalizeDeltaText = (value) => {
@@ -508,6 +505,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
       }
 
       if (reasoning) {
+        reasoningOutputText += reasoning;
         allOutputText += reasoning;
       }
     } catch (e) {
@@ -581,6 +579,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
         const outputTokens = apiUsage?.completion_tokens 
           ?? countTextTokens(allOutputText);
         const visibleOutputTokens = countTextTokens(visibleOutputText);
+        const reasoningOutputTokens = countTextTokens(reasoningOutputText);
         const inputTokensActual = apiUsage?.prompt_tokens 
           ?? countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
@@ -600,6 +599,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
           visibleTtft,
           outputTokens,
           visibleOutputTokens,
+          reasoningOutputTokens,
           inputTokens: inputTokensActual,
           generationTime: effectiveGenerationTime,
           tps,
@@ -674,6 +674,7 @@ function processTokenSpeedResult(results, config) {
   const inputTokensValues = successResults.map(r => r.inputTokens ?? 0);
   const outputTokensValues = successResults.map(r => r.outputTokens);
   const visibleOutputTokensValues = successResults.map(r => r.visibleOutputTokens ?? 0);
+  const reasoningOutputTokensValues = successResults.map(r => r.reasoningOutputTokens ?? 0);
   const requestTimeValues = successResults.map(r => r.totalRequestTime);
   const generationTimeValues = successResults
     .map(r => r.generationTime)
@@ -716,6 +717,7 @@ function processTokenSpeedResult(results, config) {
         values: visibleTtftValues
       },
       outputTokens: {
+        total: totalOutputTokens,
         mean: average(outputTokensValues),
         min: safeMin(outputTokensValues),
         max: safeMax(outputTokensValues),
@@ -726,6 +728,13 @@ function processTokenSpeedResult(results, config) {
         min: safeMin(visibleOutputTokensValues),
         max: safeMax(visibleOutputTokensValues),
         median: median(visibleOutputTokensValues)
+      },
+      reasoningOutputTokens: {
+        total: reasoningOutputTokensValues.reduce((a, b) => a + b, 0),
+        mean: average(reasoningOutputTokensValues),
+        min: safeMin(reasoningOutputTokensValues),
+        max: safeMax(reasoningOutputTokensValues),
+        median: median(reasoningOutputTokensValues)
       },
       inputTokens: {
         mean: average(inputTokensValues),

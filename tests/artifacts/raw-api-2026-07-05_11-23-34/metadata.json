@@ -1,0 +1,41 @@
+{
+  "capturedAt": "2026-07-05T03:23:36.674Z",
+  "request": {
+    "url": "https://api.ai.erix.vip/v1",
+    "normalizedUrl": "https://api.ai.erix.vip/v1/chat/completions",
+    "model": "qwen3.6:35b",
+    "timeout": 90000,
+    "userAgent": "Kilo-Code/5.10.4",
+    "prompt": "请只输出一句简短的中文测试响应，并结束。",
+    "requestBody": {
+      "model": "qwen3.6:35b",
+      "messages": [
+        {
+          "role": "user",
+          "content": "请只输出一句简短的中文测试响应，并结束。"
+        }
+      ],
+      "max_tokens": 256,
+      "stream": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "statusText": "OK",
+    "headers": {
+      "server": "nginx/1.29.7",
+      "date": "Sun, 05 Jul 2026 03:23:36 GMT",
+      "content-type": "text/event-stream",
+      "transfer-encoding": "chunked",
+      "connection": "keep-alive",
+      "cache-control": "no-cache",
+      "x-oneapi-request-id": "2026070511233561690260538044030"
+    }
+  },
+  "summary": {
+    "chunkCount": 6,
+    "eventCount": 9,
+    "jsonEventCount": 8,
+    "hasDoneEvent": true
+  }
+}

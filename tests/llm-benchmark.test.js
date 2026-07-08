@@ -1,7 +1,19 @@
 import { EventEmitter } from 'node:events';
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { measureTokenSpeed, processTokenSpeedResult } from '../src/llm-benchmark.js';
 import { createSimplePromptVariant } from '../src/default-prompts.js';
+
+const mockedHttpClient = vi.hoisted(() => ({
+  post: vi.fn()
+}));
+
+vi.mock('../src/http-client.js', async () => {
+  const actual = await vi.importActual('../src/http-client.js');
+  return {
+    ...actual,
+    createHttpClient: vi.fn(() => mockedHttpClient)
+  };
+});
 
 function createMockClient(chunks) {
   return {
@@ -19,6 +31,10 @@ function createMockClient(chunks) {
 }
 
 describe('llm-benchmark', () => {
+  beforeEach(() => {
+    mockedHttpClient.post.mockReset();
+  });
+
   describe('default prompt generation', () => {
     it('should generate bounded non-sample prompts with output limit guidance', () => {
       const prompts = Array.from({ length: 8 }, () => createSimplePromptVariant());
@@ -29,6 +45,43 @@ describe('llm-benchmark', () => {
       }
 
       expect(new Set(prompts).size).toBeGreaterThan(1);
+    });
+  });
+
+  describe('runLlmBenchmarkTest', () => {
+    it('should force warmup requests to use simple prompts in dynamic sample mode', async () => {
+      const recordedBodies = [];
+
+      mockedHttpClient.post.mockImplementation(async (_url, body) => {
+        recordedBodies.push(body);
+        const stream = new EventEmitter();
+        setTimeout(() => {
+          stream.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"ok"}}]}\n'));
+          stream.emit('data', Buffer.from('data: {"usage":{"prompt_tokens":8,"completion_tokens":1}}\n'));
+          stream.emit('end');
+        }, 0);
+        return { data: stream };
+      });
+
+      const { runLlmBenchmarkTest } = await import('../src/llm-benchmark.js');
+
+      await runLlmBenchmarkTest({
+        url: 'https://api.example.com',
+        model: 'test-model',
+        generateInputText: async () => 'SAMPLE_CONTENT_SHOULD_NOT_APPEAR',
+        sampleCount: 3,
+        warmupRequests: 1,
+        samples: 1,
+        concurrency: 1,
+        maxOutputTokens: 16,
+        quiet: true
+      });
+
+      expect(recordedBodies).toHaveLength(2);
+      expect(recordedBodies[0].messages).toHaveLength(1);
+      expect(recordedBodies[0].messages[0].content).not.toContain('SAMPLE_CONTENT_SHOULD_NOT_APPEAR');
+      expect(recordedBodies[0].messages[0].content).toContain('1000 token 以内');
+      expect(recordedBodies[1].messages[0].content).toBe('SAMPLE_CONTENT_SHOULD_NOT_APPEAR');
     });
   });
 
@@ -160,6 +213,7 @@ describe('llm-benchmark', () => {
           inputTokens: 40,
           outputTokens: 100,
           visibleOutputTokens: 80,
+          reasoningOutputTokens: 20,
           totalRequestTime: 1200,
           generationTime: 10000,
           requestSendTime: 1000,
@@ -173,6 +227,7 @@ describe('llm-benchmark', () => {
           inputTokens: 60,
           outputTokens: 100,
           visibleOutputTokens: 90,
+          reasoningOutputTokens: 10,
           totalRequestTime: 350,
           generationTime: 2000,
           requestSendTime: 1100,
@@ -192,6 +247,9 @@ describe('llm-benchmark', () => {
       expect(processed.metrics.throughputTps).toBeCloseTo(200 / 15, 5);
       expect(processed.metrics.visibleTtft.mean).toBe(150);
       expect(processed.metrics.visibleOutputTokens.mean).toBe(85);
+      expect(processed.metrics.outputTokens.total).toBe(200);
+      expect(processed.metrics.reasoningOutputTokens.total).toBe(30);
+      expect(processed.metrics.reasoningOutputTokens.mean).toBe(15);
       expect(processed.metrics.inputTokens.mean).toBe(50);
     });
 

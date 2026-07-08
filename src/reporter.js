@@ -127,11 +127,11 @@ function getTokenMetricCards(results) {
   }
 
   return {
-    primaryOutputLabel: '服务端输出Tokens',
-    primaryOutputValue: tokenSpeed.metrics.outputTokens.mean.toFixed(0),
-    secondaryOutputLabel: '可见文本Tokens',
-    secondaryOutputValue: tokenSpeed.metrics.visibleOutputTokens.mean.toFixed(0),
-    secondaryOutputHint: '本地根据可见 content 估算，仅用于辅助理解'
+    primaryOutputLabel: '总输出Tokens',
+    primaryOutputValue: tokenSpeed.metrics.outputTokens.total.toFixed(0),
+    secondaryOutputLabel: '总思考输出Tokens',
+    secondaryOutputValue: tokenSpeed.metrics.reasoningOutputTokens.total.toFixed(0),
+    secondaryOutputHint: '本地根据 reasoning 文本估算，仅用于辅助理解'
   };
 }
 
@@ -233,8 +233,10 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     lines.push('');
     lines.push('| 指标 | 值 |');
     lines.push('|------|-----|');
+    lines.push(`| 总输出 | ${results.tokenSpeed.metrics.outputTokens.total.toFixed(0)} tokens |`);
     lines.push(`| 平均 | ${results.tokenSpeed.metrics.outputTokens.mean.toFixed(0)} tokens |`);
     lines.push(`| 中位数 | ${results.tokenSpeed.metrics.outputTokens.median.toFixed(0)} tokens |`);
+    lines.push(`| 总思考输出 | ${results.tokenSpeed.metrics.reasoningOutputTokens.total.toFixed(0)} tokens |`);
     lines.push('');
     
     // 错误统计
@@ -975,17 +977,12 @@ function generateTokenSpeedHtml(results, chartData) {
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">失败请求</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
-                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${(r.metrics.visibleTtft.mean / 1000).toFixed(2)}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
-                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">首可见Token TTFT</div>
-              </div>
-              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${tokenMetricCards.primaryOutputValue}</div>
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">${tokenMetricCards.primaryOutputLabel}</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #d69e2e;">${tokenMetricCards.secondaryOutputValue}</div>
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">${tokenMetricCards.secondaryOutputLabel}</div>
-                <div style="margin-top: 6px; font-size: 11px; color: #718096; line-height: 1.4;">${tokenMetricCards.secondaryOutputHint}</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #e53e3e;">${r.config.concurrency}</div>
@@ -1001,6 +998,9 @@ function generateTokenSpeedHtml(results, chartData) {
               </div>
             </div>
           </div>
+        </div>
+        <div style="margin-top: 12px; font-size: 12px; color: #718096; line-height: 1.6; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px;">
+          ${tokenMetricCards.secondaryOutputLabel}：${tokenMetricCards.secondaryOutputHint}
         </div>
       </div>
       
@@ -1069,5 +1069,6 @@ export {
   getFailureSummary,
   getReportSummary,
   getTokenMetricCards,
-  getInputTokenDisplay
+  getInputTokenDisplay,
+  generateHtmlReport
 };
