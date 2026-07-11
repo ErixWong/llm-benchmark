@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { normalizeReportResults, prepareChartData, getReportDisplayTime, formatSecondsFromMs, getPrimaryTokenSource, getFailureSummary, getReportSummary, getTokenMetricCards, getInputTokenDisplay, generateHtmlReport } from '../src/reporter.js';
+import { describe, it, expect, vi } from 'vitest';
+import { normalizeReportResults, prepareChartData, getReportDisplayTime, formatSecondsFromMs, getPrimaryTokenSource, getFailureSummary, getReportSummary, getTokenMetricCards, getInputTokenDisplay, generateHtmlReport, generateReport } from '../src/reporter.js';
 
 describe('reporter', () => {
   it('should preserve top-level fields when normalizing token-speed results', () => {
@@ -167,5 +167,127 @@ describe('reporter', () => {
 
     expect(html).not.toContain('首可见Token TTFT');
     expect(html).toContain('首生成Token TTFT');
+  });
+
+  describe('normalizeReportResults contract', () => {
+    it('should preserve extra top-level fields for downstream compatibility', () => {
+      const normalized = normalizeReportResults({
+        type: 'token-speed',
+        reportTitle: 'Test',
+        customField: 'custom-value',
+        anotherMeta: 123
+      });
+
+      expect(normalized.tokenSpeed.type).toBe('token-speed');
+      expect(normalized.customField).toBe('custom-value');
+      expect(normalized.anotherMeta).toBe(123);
+      expect(normalized.reportTitle).toBe('Test');
+    });
+
+    it('should return input as-is when tokenSpeed already present', () => {
+      const input = { tokenSpeed: { type: 'token-speed' }, extra: 'data' };
+      const normalized = normalizeReportResults(input);
+      expect(normalized).toBe(input);
+    });
+  });
+
+  describe('generateReport new interface', () => {
+    it('should accept externalTimestamp and use it for file naming', async () => {
+      const outputDir = 'D:/projects/node/llm_model_test/llm_benchmark/tests/artifacts';
+      const results = {
+        type: 'token-speed',
+        tokenSpeed: {
+          success: true,
+          config: { model: 'test', concurrency: 1, samples: 1, maxOutputTokens: 100 },
+          metrics: {
+            tps: { mean: 10, requestMean: 10, median: 10, min: 10, max: 10 },
+            throughputTps: 10,
+            ttft: { mean: 1000, median: 1000, min: 1000, max: 1000 },
+            outputTokens: { total: 100, mean: 100, median: 100 },
+            reasoningOutputTokens: { total: 0, mean: 0, median: 0 },
+            visibleOutputTokens: { mean: 100, median: 100 },
+            inputTokens: { mean: 50, min: 50, max: 50 },
+            requestTime: { mean: 1000, median: 1000 }
+          },
+          errors: { total: 0, rate: '0.00' },
+          raw: [],
+          failed: []
+        },
+        reportTitle: 'Test Report'
+      };
+
+      const result = await generateReport(results, outputDir, true, 'custom-timestamp');
+
+      expect(result.jsonPath).toContain('custom-timestamp');
+      expect(result.mdPath).toContain('custom-timestamp');
+      expect(result.htmlPath).toContain('custom-timestamp');
+    });
+
+    it('should not print report paths when quiet=true', async () => {
+      const outputDir = 'D:/projects/node/llm_model_test/llm_benchmark/tests/artifacts';
+      const results = {
+        type: 'token-speed',
+        tokenSpeed: {
+          success: true,
+          config: { model: 'test', concurrency: 1, samples: 1, maxOutputTokens: 100 },
+          metrics: {
+            tps: { mean: 10, requestMean: 10, median: 10, min: 10, max: 10 },
+            throughputTps: 10,
+            ttft: { mean: 1000, median: 1000, min: 1000, max: 1000 },
+            outputTokens: { total: 100, mean: 100, median: 100 },
+            reasoningOutputTokens: { total: 0, mean: 0, median: 0 },
+            visibleOutputTokens: { mean: 100, median: 100 },
+            inputTokens: { mean: 50, min: 50, max: 50 },
+            requestTime: { mean: 1000, median: 1000 }
+          },
+          errors: { total: 0, rate: '0.00' },
+          raw: [],
+          failed: []
+        },
+        reportTitle: 'Quiet Test Report'
+      };
+
+      // Spy on console.log to verify no output in quiet mode
+      const logSpy = vi.fn();
+      vi.spyOn(console, 'log').mockImplementation(logSpy);
+
+      const result = await generateReport(results, outputDir, true, 'quiet-test-timestamp');
+
+      // Verify no console.log calls (report paths should be suppressed)
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(result.jsonPath).toContain('quiet-test-timestamp');
+      expect(result.mdPath).toContain('quiet-test-timestamp');
+      expect(result.htmlPath).toContain('quiet-test-timestamp');
+    });
+
+    it('should print report paths when quiet=false', async () => {
+      const outputDir = 'D:/projects/node/llm_model_test/llm_benchmark/tests/artifacts';
+      const results = {
+        type: 'token-speed',
+        tokenSpeed: {
+          success: true,
+          config: { model: 'test', concurrency: 1, samples: 1, maxOutputTokens: 100 },
+          metrics: {
+            tps: { mean: 10, requestMean: 10, median: 10, min: 10, max: 10 },
+            throughputTps: 10,
+            ttft: { mean: 1000, median: 1000, min: 1000, max: 1000 },
+            outputTokens: { total: 100, mean: 100, median: 100 },
+            reasoningOutputTokens: { total: 0, mean: 0, median: 0 },
+            visibleOutputTokens: { mean: 100, median: 100 },
+            inputTokens: { mean: 50, min: 50, max: 50 },
+            requestTime: { mean: 1000, median: 1000 }
+          },
+          errors: { total: 0, rate: '0.00' },
+          raw: [],
+          failed: []
+        },
+        reportTitle: 'Verbose Test Report'
+      };
+
+      const result = await generateReport(results, outputDir, false, 'verbose-test-timestamp');
+      expect(result.jsonPath).toContain('verbose-test-timestamp');
+      expect(result.mdPath).toContain('verbose-test-timestamp');
+      expect(result.htmlPath).toContain('verbose-test-timestamp');
+    });
   });
 });

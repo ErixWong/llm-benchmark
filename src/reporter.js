@@ -29,16 +29,22 @@ function escapeHtml(str) {
  * @param {string} outputDir - 输出目录
  * @returns {Promise<Object>} 生成的报告路径
  */
-export async function generateReport(results, outputDir = './results') {
+export async function generateReport(results, outputDir = './results', quiet = false, externalTimestamp = null) {
   const normalizedResults = normalizeReportResults(results);
 
   // 确保输出目录存在
   await fs.mkdir(outputDir, { recursive: true });
 
-  // 使用本地时区（UTC+8）生成时间戳
-  const now = new Date();
-  const pad = (n) => n.toString().padStart(2, '0');
-  const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  // 时间戳来源：优先使用调用方传入的统一时间戳（避免目录与文件时间戳不一致）
+  let localTimestamp;
+  if (externalTimestamp) {
+    localTimestamp = externalTimestamp;
+  } else {
+    // 回退：内部生成（兼容直接调用 generateReport 的场景）
+    const now = new Date();
+    const pad = (n) => n.toString().padStart(2, '0');
+    localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  }
   const baseName = `benchmark-${localTimestamp}`;
 
   // 生成JSON报告
@@ -50,14 +56,24 @@ export async function generateReport(results, outputDir = './results') {
   // 生成HTML报告
   const htmlPath = await generateHtmlReport(normalizedResults, outputDir, baseName);
 
-  console.log(chalk.cyan('\n📁 报告已生成:'));
-  console.log(`  JSON: ${jsonPath}`);
-  console.log(`  Markdown: ${mdPath}`);
-  console.log(`  HTML: ${htmlPath}`);
+  if (!quiet) {
+    console.log(chalk.cyan('\n📁 报告已生成:'));
+    console.log(`  JSON: ${jsonPath}`);
+    console.log(`  Markdown: ${mdPath}`);
+    console.log(`  HTML: ${htmlPath}`);
+  }
 
   return { jsonPath, mdPath, htmlPath };
 }
 
+/**
+ * 标准化报告结果结构
+ * @param {Object} results - 原始测试结果
+ * @returns {Object} 标准化后的结果，保证：
+ *   - 始终包含 tokenSpeed 字段
+ *   - 保留顶层扩展字段（如 extraMeta、reportTitle），供下游脚本/工具使用
+ *   - reportTitle 同时存在于顶层和 tokenSpeed 包装对象中
+ */
 function normalizeReportResults(results) {
   if (results?.tokenSpeed) {
     return results;

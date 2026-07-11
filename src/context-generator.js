@@ -3,7 +3,7 @@
  * 精确控制输入token数量
  */
 
-import { encode, decode, countTokens as countTextTokenizerTokens } from 'gpt-tokenizer';
+import { encode, countTokens as countTextTokenizerTokens } from 'gpt-tokenizer';
 import { countTokens as countChatTokenizerTokens } from 'gpt-tokenizer/model/gpt-3.5-turbo';
 
 /**

@@ -10,6 +10,32 @@ import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl,
 import { createSimplePromptVariant } from './default-prompts.js';
 
 /**
+ * 创建 noop spinner —— quiet 模式下的 ora 兼容替代品
+ * @returns {Object} noop spinner 对象
+ */
+function createNoopSpinner() {
+  return {
+    text: '',
+    start: () => createNoopSpinner(),
+    succeed: () => createNoopSpinner(),
+    fail: () => createNoopSpinner(),
+    warn: () => createNoopSpinner(),
+    update: () => createNoopSpinner()
+  };
+}
+
+/**
+ * 创建 quiet-aware spinner —— 根据 quiet 模式选择 ora 或 noop
+ * @param {string} text - 初始文本
+ * @param {boolean} quiet - 是否静默模式
+ * @returns {Object} spinner 对象
+ */
+function createSpinner(text, quiet = false) {
+  if (quiet) return createNoopSpinner();
+  return ora(text).start();
+}
+
+/**
  * 运行LLM基准测试
  * @param {Object} options - 测试选项
  * @returns {Promise<Object>} 测试结果
@@ -34,6 +60,9 @@ export async function runLlmBenchmarkTest(options) {
     timeout = DEFAULT_TIMEOUT,  // 请求超时时间（毫秒）
     quiet = false  // 静默模式
   } = options;
+
+  // quiet 模式辅助函数：仅在非静默模式下输出
+  const quietLog = quiet ? () => {} : console.log.bind(console);
 
   // 统一获取 User-Agent
   const userAgent = process.env.USER_AGENT || 'llm-benchmark/1.0.0';
@@ -60,6 +89,7 @@ export async function runLlmBenchmarkTest(options) {
   const httpClient = createHttpClient({
     baseURL: url, // createHttpClient会自动规范化
     timeout: timeout,  // 使用传入的超时参数
+    quiet,
     headers: {
       'User-Agent': userAgent,
       ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
@@ -97,28 +127,28 @@ export async function runLlmBenchmarkTest(options) {
   
   if (generateInputText) {
     // 动态生成模式：每次请求时生成新的输入
-    console.log(chalk.cyan('\n🔧 测试配置:'));
-    console.log(`  模型: ${model}`);
-    console.log(`  输入模式: 动态生成（每次请求随机抽取样本）`);
-      console.log(`  每次抽取样本数: ${sampleCount}`);
+    quietLog(chalk.cyan('\n🔧 测试配置:'));
+    quietLog(`  模型: ${model}`);
+    quietLog(`  输入模式: 动态生成（每次请求随机抽取样本）`);
+      quietLog(`  每次抽取样本数: ${sampleCount}`);
       // 预估token数
       try {
       const sampleInput = await withInputGenerationLimit(() => generateInputText());
         if (sampleInput) {
           actualTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
-          console.log(`  预估输入Token数: ${actualTokens}`);
+          quietLog(`  预估输入Token数: ${actualTokens}`);
       }
     } catch (e) {
-      console.log(`  预估输入Token数: 未知`);
+      quietLog(`  预估输入Token数: 未知`);
     }
   } else if (inputTexts && inputTexts.length > 0) {
     // 使用传入的多个文本作为输入
     contextMessagesList = inputTexts.map(text => [{ role: 'user', content: text }]);
     actualTokens = countMessagesTokens(contextMessagesList[0]);
-    console.log(chalk.cyan('\n🔧 测试配置:'));
-    console.log(`  模型: ${model}`);
-    console.log(`  输入来源: 用户提供的 ${inputTexts.length} 个不同文本`);
-    console.log(`  输入Token数: ${actualTokens} (每个样本)`);
+    quietLog(chalk.cyan('\n🔧 测试配置:'));
+    quietLog(`  模型: ${model}`);
+    quietLog(`  输入来源: 用户提供的 ${inputTexts.length} 个不同文本`);
+    quietLog(`  输入Token数: ${actualTokens} (每个样本)`);
   } else if (inputText) {
     // 使用传入的单个文本作为所有请求的输入
     const messages = [{ role: 'user', content: inputText }];
@@ -127,11 +157,11 @@ export async function runLlmBenchmarkTest(options) {
     for (let i = 0; i < samples; i++) {
       contextMessagesList.push([...messages]);
     }
-    console.log(chalk.cyan('\n🔧 测试配置:'));
-    console.log(`  模型: ${model}`);
-    console.log(`  输入来源: 用户提供的文本`);
-    console.log(`  输入字符数: ${inputText.length}`);
-    console.log(`  实际输入Token数: ${actualTokens}`);
+    quietLog(chalk.cyan('\n🔧 测试配置:'));
+    quietLog(`  模型: ${model}`);
+    quietLog(`  输入来源: 用户提供的文本`);
+    quietLog(`  输入字符数: ${inputText.length}`);
+    quietLog(`  实际输入Token数: ${actualTokens}`);
   } else {
     // 自动生成上下文
     const context = generateContext(inputTokens, {
@@ -148,32 +178,32 @@ export async function runLlmBenchmarkTest(options) {
     // 验证上下文
     const contextValidation = validateContext(context.messages, context.actualTokens);
     
-    console.log(chalk.cyan('\n🔧 测试配置:'));
-    console.log(`  模型: ${model}`);
-    console.log(`  目标输入Token数: ${inputTokens}`);
-    console.log(`  实际输入Token数: ${actualTokens} (精度: ${contextValidation.accuracy})`);
+    quietLog(chalk.cyan('\n🔧 测试配置:'));
+    quietLog(`  模型: ${model}`);
+    quietLog(`  目标输入Token数: ${inputTokens}`);
+    quietLog(`  实际输入Token数: ${actualTokens} (精度: ${contextValidation.accuracy})`);
     if (systemPrompt) {
-      console.log(`  系统提示词: ${systemPrompt.substring(0, 50)}...`);
+      quietLog(`  系统提示词: ${systemPrompt.substring(0, 50)}...`);
     }
     if (contextRounds > 0) {
-      console.log(`  多轮对话: ${contextRounds} 轮`);
+      quietLog(`  多轮对话: ${contextRounds} 轮`);
     }
   }
   
-  console.log(`  最大输出Token数: ${maxOutputTokens}`);
-  console.log(`  并发数: ${concurrency}`);
-  console.log(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
-  console.log(`  采样次数: ${samples}`);
+  quietLog(`  最大输出Token数: ${maxOutputTokens}`);
+  quietLog(`  并发数: ${concurrency}`);
+  quietLog(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
+  quietLog(`  采样次数: ${samples}`);
 
   // 预热请求
   if (warmupRequests > 0) {
-    const warmupSpinner = ora(`执行 ${warmupRequests} 次预热请求...`).start();
+    const warmupSpinner = createSpinner(`执行 ${warmupRequests} 次预热请求...`, quiet);
     for (let i = 0; i < warmupRequests; i++) {
       try {
         const warmupMessages = useDynamicGeneration
           ? [{ role: 'user', content: createSimplePromptVariant() }]
           : contextMessagesList[0];
-        await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens);
+        await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens, quiet);
       } catch (error) {
         // 检查是否是HTTP错误（4xx/5xx），如果是则停止测试
         if (error.response && error.response.status >= 400) {
@@ -199,7 +229,7 @@ export async function runLlmBenchmarkTest(options) {
 
   // 执行测试 - 支持batch和pipeline两种并发模式
   const results = [];
-  const spinner = ora(`执行Token速度测试 (0/${samples})`).start();
+  const spinner = createSpinner(`执行Token速度测试 (0/${samples})`, quiet);
 
   const testStartTime = Date.now();
 
@@ -213,12 +243,12 @@ export async function runLlmBenchmarkTest(options) {
       const messages = await getMessagesForRequest(requestIndex);
       
       try {
-        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, quiet);
         completed++;
         spinner.text = `执行Token速度测试 (${completed}/${samples})`;
         
         // 每次请求完成后输出详细信息
-        logRequestCompletion(completed, samples, result, false, requestIndex + 1);
+        logRequestCompletion(completed, samples, result, false, requestIndex + 1, quiet);
         
         return {
           ...result,
@@ -231,7 +261,7 @@ export async function runLlmBenchmarkTest(options) {
         spinner.text = `执行Token速度测试 (${completed}/${samples})`;
         
         // 输出错误信息
-        logRequestCompletion(completed, samples, { error: error.message }, true, requestIndex + 1);
+        logRequestCompletion(completed, samples, { error: error.message }, true, requestIndex + 1, quiet);
         
         return {
           success: false,
@@ -290,11 +320,11 @@ export async function runLlmBenchmarkTest(options) {
           (async () => {
             const messages = await getMessagesForRequest(currentRequestIndex);
             try {
-              const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+              const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, quiet);
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
-              logRequestCompletion(completed, samples, result, false, currentRequestIndex + 1);
+              logRequestCompletion(completed, samples, result, false, currentRequestIndex + 1, quiet);
               
                 return {
                   ...result,
@@ -306,7 +336,7 @@ export async function runLlmBenchmarkTest(options) {
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
-              logRequestCompletion(completed, samples, { error: error.message }, true, currentRequestIndex + 1);
+              logRequestCompletion(completed, samples, { error: error.message }, true, currentRequestIndex + 1, quiet);
               
                 return {
                   success: false,
@@ -330,9 +360,9 @@ export async function runLlmBenchmarkTest(options) {
       const messages = await getMessagesForRequest(i);
       
       try {
-        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, quiet);
         
-        logRequestCompletion(i + 1, samples, result, false, i + 1);
+        logRequestCompletion(i + 1, samples, result, false, i + 1, quiet);
         
         results.push({
           ...result,
@@ -341,7 +371,7 @@ export async function runLlmBenchmarkTest(options) {
           responseReceiveTime: result.responseReceiveTime
         });
       } catch (error) {
-        logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1);
+        logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1, quiet);
         
         results.push({
           success: false,
@@ -373,7 +403,7 @@ export async function runLlmBenchmarkTest(options) {
   });
 
   // 打印摘要
-  printTokenSpeedSummary(processedResult);
+  printTokenSpeedSummary(processedResult, quiet);
 
   return processedResult;
 }
@@ -386,7 +416,8 @@ export async function runLlmBenchmarkTest(options) {
  * @param {boolean} isError - 是否错误
  * @param {number} requestNum - 请求编号
  */
-function logRequestCompletion(current, total, result, isError = false, requestNum) {
+function logRequestCompletion(current, total, result, isError = false, requestNum, quiet = false) {
+  if (quiet) return;
   const prefix = chalk.gray(`\n[${current}/${total}] 请求 #${requestNum} ${isError ? '失败' : '完成'}:`);
   console.log(prefix);
   
@@ -411,7 +442,7 @@ function logRequestCompletion(current, total, result, isError = false, requestNu
  * @param {number} maxOutputTokens - 最大输出Token数
  * @returns {Promise<Object>} 测量结果
  */
-async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens) {
+async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens, quiet = false) {
   const requestStart = Date.now();
   let firstTokenTime = null;
   let firstVisibleTokenTime = null;
@@ -623,7 +654,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
     });
   } catch (error) {
     // 输出详细错误信息用于调试
-    if (error.response) {
+    if (error.response && !quiet) {
       let errorDetail = '';
       try {
         const errorData = error.response.data;
@@ -795,8 +826,10 @@ function safeMax(arr) {
 /**
  * 打印Token速度测试摘要
  * @param {Object} result - 处理后的结果
+ * @param {boolean} quiet - 是否静默模式
  */
-function printTokenSpeedSummary(result) {
+function printTokenSpeedSummary(result, quiet = false) {
+  if (quiet) return;
   console.log('\n' + chalk.bold('📊 Token速度测试结果摘要'));
   console.log('─'.repeat(50));
 
@@ -818,6 +851,13 @@ function printTokenSpeedSummary(result) {
   console.log(`  中位数: ${formatLatency(result.metrics.ttft.median)}`);
   console.log(`  最小: ${formatLatency(result.metrics.ttft.min)}`);
   console.log(`  最大: ${formatLatency(result.metrics.ttft.max)}`);
+  if (result.metrics.visibleTtft) {
+    console.log(chalk.cyan('\n首可见内容延迟 (Visible TTFT):'));
+    console.log(`  平均: ${formatLatency(result.metrics.visibleTtft.mean)}`);
+    console.log(`  中位数: ${formatLatency(result.metrics.visibleTtft.median)}`);
+    console.log(`  最小: ${formatLatency(result.metrics.visibleTtft.min)}`);
+    console.log(`  最大: ${formatLatency(result.metrics.visibleTtft.max)}`);
+  }
 
   console.log(chalk.cyan('\n输出Token数:'));
   console.log(`  平均: ${result.metrics.outputTokens.mean.toFixed(0)} tokens`);
@@ -873,5 +913,6 @@ export {
   measureTokenSpeed,
   processTokenSpeedResult,
   average,
-  median
+  median,
+  createNoopSpinner
 };

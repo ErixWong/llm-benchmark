@@ -6,7 +6,6 @@
  */
 
 import { program } from 'commander';
-import chalk from 'chalk';
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import path from 'path';
@@ -16,6 +15,7 @@ import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { normalizeConcurrencyMode } from './cli-options.js';
 import { createSimplePromptVariant } from './default-prompts.js';
+import { safeParseInt } from './utils.js';
 
 // 加载环境变量
 dotenv.config();
@@ -30,16 +30,21 @@ const DEFAULT_SAMPLE_PATTERNS = [
   /^(sample|novel|tech-news|conversation|code-samples|multimodal)-/  // 匹配特定前缀
 ];
 
+// 缓存环境变量编译的正则，避免每次调用重复编译
+let _cachedEnvPatterns = null;
+
 /**
  * 检查文件名是否匹配样本规则
  * @param {string} filename - 文件名
  * @returns {boolean} 是否匹配
  */
 function matchesSamplePattern(filename) {
-  // 优先使用环境变量配置的规则
+  // 优先使用环境变量配置的规则（带缓存）
   if (process.env.SAMPLE_FILE_PATTERNS) {
-    const patterns = process.env.SAMPLE_FILE_PATTERNS.split(',').map(p => new RegExp(p.trim()));
-    return patterns.some(pattern => pattern.test(filename));
+    if (!_cachedEnvPatterns) {
+      _cachedEnvPatterns = process.env.SAMPLE_FILE_PATTERNS.split(',').map(p => new RegExp(p.trim()));
+    }
+    return _cachedEnvPatterns.some(pattern => pattern.test(filename));
   }
   // 使用默认规则
   return DEFAULT_SAMPLE_PATTERNS.some(pattern => pattern.test(filename));
@@ -49,25 +54,6 @@ program
   .name('llm-benchmark')
   .description('LLM API Token生成速度测试工具')
   .version('1.0.0');
-
-/**
- * 安全解析整数，验证NaN
- * @param {string} value - 字符串值
- * @param {number} defaultValue - 默认值
- * @param {string} name - 参数名称(用于错误提示)
- * @returns {number} 解析后的整数
- */
-function safeParseInt(value, defaultValue, name) {
-  if (value === undefined || value === null) {
-    return defaultValue;
-  }
-  const parsed = parseInt(value, 10);
-  if (isNaN(parsed)) {
-    console.warn(chalk.yellow(`⚠️ 参数 ${name} 值 "${value}" 不是有效数字，使用默认值 ${defaultValue}`));
-    return defaultValue;
-  }
-  return parsed;
-}
 
 /**
  * 递归扫描目录获取所有样本文件
@@ -128,7 +114,12 @@ function registerStartCommand(cliProgram) {
     .option('-n, --sample-count <number>', '每次请求随机抽取的样本数量（0表示使用简单prompt）', process.env.SAMPLE_COUNT || '0')
     .option('-m, --max-output <number>', '最大输出Token数', process.env.MAX_OUTPUT_TOKENS || '30000')
     .option('--concurrency-mode <mode>', '并发模式: batch（批次）或 pipeline（流水线）', process.env.CONCURRENCY_MODE || 'pipeline')
-    .option('-t, --timeout <seconds>', '请求超时时间(秒)', process.env.DEFAULT_TIMEOUT ? String(parseInt(process.env.DEFAULT_TIMEOUT, 10) / 1000) : '90')
+    .option('-t, --timeout <seconds>', '请求超时时间(秒)', (() => {
+      const raw = process.env.DEFAULT_TIMEOUT;
+      if (raw === undefined || raw === null || raw === '') return '90';
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) ? '90' : String(parsed / 1000);
+    })())
     .option('-u, --url <url>', 'API端点URL')
     .option('-k, --api-key <key>', 'API密钥')
     .option('--model <model>', '模型名称')
@@ -157,11 +148,19 @@ function registerStartCommand(cliProgram) {
       console.log(chalk.blue('⚡ 开始Token生成速度测试...'));
     }
     
-    const concurrency = safeParseInt(options.concurrency, 4, 'concurrency');
-    const rounds = safeParseInt(options.rounds, 5, 'rounds');
-    const sampleCount = safeParseInt(options.sampleCount, 0, 'sampleCount');
-    const maxOutputTokens = safeParseInt(options.maxOutput, 30000, 'maxOutput');
-    const timeout = safeParseInt(options.timeout, 90, 'timeout') * 1000;
+    const concurrency = safeParseInt(options.concurrency, 4, 'concurrency', quiet);
+    const rounds = safeParseInt(options.rounds, 5, 'rounds', quiet);
+    const sampleCount = safeParseInt(options.sampleCount, 0, 'sampleCount', quiet);
+    const maxOutputTokens = safeParseInt(options.maxOutput, 30000, 'maxOutput', quiet);
+    const timeoutSeconds = safeParseInt(options.timeout, 90, 'timeout', quiet);
+    // timeout 边界校验：1-3600秒（1秒 ~ 1小时），与其他参数范围校验保持一致
+    const TIMEOUT_MIN = 1;
+    const TIMEOUT_MAX = 3600;
+    if (timeoutSeconds < TIMEOUT_MIN || timeoutSeconds > TIMEOUT_MAX) {
+      console.error(chalk.red(`❌ 错误: 超时时间必须在 ${TIMEOUT_MIN}-${TIMEOUT_MAX} 秒之间`));
+      process.exit(1);
+    }
+    const timeout = timeoutSeconds * 1000;
     const concurrencyMode = normalizeConcurrencyMode(options.concurrencyMode);
     const samples = concurrency * rounds;
     
@@ -256,16 +255,16 @@ function registerStartCommand(cliProgram) {
         process.exit(1);
       }
       
-      // 为每份报告创建单独的目录
+      // 为每份报告创建单独的目录 —— 时间戳统一在此生成，传递给 reporter
       const now = new Date();
       const pad = (n) => n.toString().padStart(2, '0');
       const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
       const reportDir = `${options.output}/report-${localTimestamp}`;
-      
+
       // 添加报告标题到结果中
       results.reportTitle = reportTitle;
-      
-      await generateReport(results, reportDir);
+
+      await generateReport(results, reportDir, quiet, localTimestamp);
       if (!quiet) {
         console.log(chalk.green('✅ 测试完成!'));
       }
@@ -284,4 +283,4 @@ if (process.argv[1]) {
   }
 }
 
-export { normalizeConcurrencyMode, registerStartCommand, createInputGenerator };
+

@@ -1,7 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { measureTokenSpeed, processTokenSpeedResult } from '../src/llm-benchmark.js';
+import { measureTokenSpeed, processTokenSpeedResult, createNoopSpinner } from '../src/llm-benchmark.js';
+import { createHttpClient as createHttpClientMock } from '../src/http-client.js';
 import { createSimplePromptVariant } from '../src/default-prompts.js';
+
+// Spy on console and ora for quiet mode tests
+const originalConsoleLog = console.log;
+const originalConsoleWarn = console.warn;
+const originalOra = vi.doMock('ora', () => vi.fn());
 
 const mockedHttpClient = vi.hoisted(() => ({
   post: vi.fn()
@@ -33,6 +39,7 @@ function createMockClient(chunks) {
 describe('llm-benchmark', () => {
   beforeEach(() => {
     mockedHttpClient.post.mockReset();
+    createHttpClientMock.mockClear();
   });
 
   describe('default prompt generation', () => {
@@ -82,6 +89,36 @@ describe('llm-benchmark', () => {
       expect(recordedBodies[0].messages[0].content).not.toContain('SAMPLE_CONTENT_SHOULD_NOT_APPEAR');
       expect(recordedBodies[0].messages[0].content).toContain('1000 token 以内');
       expect(recordedBodies[1].messages[0].content).toBe('SAMPLE_CONTENT_SHOULD_NOT_APPEAR');
+    });
+
+    it('should pass quiet=true to createHttpClient', async () => {
+      mockedHttpClient.post.mockImplementation(async () => {
+        const stream = new EventEmitter();
+        setTimeout(() => {
+          stream.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"ok"}}]}\n'));
+          stream.emit('data', Buffer.from('data: {"usage":{"prompt_tokens":8,"completion_tokens":1}}\n'));
+          stream.emit('end');
+        }, 0);
+        return { data: stream };
+      });
+
+      const { runLlmBenchmarkTest } = await import('../src/llm-benchmark.js');
+
+      await runLlmBenchmarkTest({
+        url: 'https://api.example.com',
+        model: 'test-model',
+        inputText: 'hello',
+        warmupRequests: 0,
+        samples: 1,
+        concurrency: 1,
+        maxOutputTokens: 16,
+        quiet: true
+      });
+
+      expect(createHttpClientMock).toHaveBeenCalledWith(expect.objectContaining({
+        baseURL: 'https://api.example.com',
+        quiet: true
+      }));
     });
   });
 
@@ -364,6 +401,26 @@ describe('llm-benchmark', () => {
 
       expect(processed.metrics.tps.mean).toBeCloseTo(20, 5);
       expect(processed.metrics.tps.requestMean).toBe(10);
+    });
+  });
+
+  describe('quiet mode spinner', () => {
+    it('should return a noop spinner with no-op methods', () => {
+      const spinner = createNoopSpinner();
+      expect(spinner.text).toBe('');
+      expect(typeof spinner.start).toBe('function');
+      expect(typeof spinner.succeed).toBe('function');
+      expect(typeof spinner.fail).toBe('function');
+      expect(typeof spinner.warn).toBe('function');
+      expect(typeof spinner.update).toBe('function');
+    });
+
+    it('should return noop spinner from chained methods', () => {
+      // start(), succeed(), fail(), warn(), update() all return noop spinner
+      const spinner = createNoopSpinner()
+        .start()
+        .succeed('done');
+      expect(spinner.text).toBe('');
     });
   });
 });

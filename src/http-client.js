@@ -8,7 +8,9 @@ import { HttpAgent, HttpsAgent } from 'agentkeepalive';
 import chalk from 'chalk';
 
 // 从环境变量读取超时配置，默认90秒
-const DEFAULT_TIMEOUT = parseInt(process.env.DEFAULT_TIMEOUT, 10) || 90000;
+// 使用 undefined 检查而非 falsy 判断，避免用户显式设置 0 时被覆盖
+const parsedTimeout = parseInt(process.env.DEFAULT_TIMEOUT, 10);
+const DEFAULT_TIMEOUT = Number.isNaN(parsedTimeout) ? 90000 : parsedTimeout;
 
 /**
  * 自动补全API URL
@@ -108,14 +110,18 @@ export function createHttpClient(options = {}) {
     timeout = DEFAULT_TIMEOUT,  // 使用环境变量配置的默认超时
     headers = {},
     retryConfig = {},
-    useKeepAlive = true  // 是否使用Keep-Alive
+    useKeepAlive = true,  // 是否使用Keep-Alive
+    quiet = false  // 静默模式
   } = options;
+
+  // quiet 模式辅助函数
+  const quietLog = quiet ? () => {} : console.log.bind(console);
 
   // 自动规范化URL
   const originalURL = baseURL;
   baseURL = normalizeApiUrl(baseURL);
   if (baseURL !== originalURL && originalURL) {
-    console.log(chalk.gray(`📡 API URL 自动补全: ${originalURL} -> ${baseURL}`));
+    quietLog(chalk.gray(`📡 API URL 自动补全: ${originalURL} -> ${baseURL}`));
   }
 
   const finalRetryConfig = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
@@ -183,9 +189,9 @@ export function createHttpClient(options = {}) {
             delay = Math.max(delay, retryAfterMs);
           }
         }
-        console.log(chalk.yellow(`⏳ API限流，等待 ${delay}ms 后重试 (${config.__retryCount}/${finalRetryConfig.maxRetries})`));
+        quietLog(chalk.yellow(`⏳ API限流，等待 ${delay}ms 后重试 (${config.__retryCount}/${finalRetryConfig.maxRetries})`));
       } else {
-        console.log(chalk.yellow(`🔄 请求失败，${delay}ms 后重试 (${config.__retryCount}/${finalRetryConfig.maxRetries})`));
+        quietLog(chalk.yellow(`🔄 请求失败，${delay}ms 后重试 (${config.__retryCount}/${finalRetryConfig.maxRetries})`));
       }
 
       // 等待后重试

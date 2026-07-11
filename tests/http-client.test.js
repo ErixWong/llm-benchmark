@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { normalizeApiUrl, validateParams, tokenSpeedTestRules } from '../src/http-client.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHttpClient, normalizeApiUrl, validateParams, tokenSpeedTestRules } from '../src/http-client.js';
 import { normalizeConcurrencyMode } from '../src/cli-options.js';
 
 describe('http-client', () => {
@@ -68,6 +68,49 @@ describe('http-client', () => {
 
     it('should reject unsupported modes', () => {
       expect(() => normalizeConcurrencyMode('parallel')).toThrow(/batch 或 pipeline/);
+    });
+  });
+
+  describe('quiet mode', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should not log URL normalization when quiet=true', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      createHttpClient({
+        baseURL: 'https://api.example.com',
+        quiet: true
+      });
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('should not log retry messages when quiet=true', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const client = createHttpClient({
+        baseURL: 'https://api.example.com/v1/chat/completions',
+        quiet: true,
+        retryConfig: {
+          maxRetries: 1,
+          retryDelay: 0,
+          retryMultiplier: 1
+        }
+      });
+
+      client.defaults.adapter = async (config) => {
+        const error = new Error('rate limited');
+        error.config = config;
+        error.response = {
+          status: 429,
+          headers: {}
+        };
+        throw error;
+      };
+
+      await expect(client.post('/')).rejects.toThrow('rate limited');
+      expect(logSpy).not.toHaveBeenCalled();
     });
   });
 });

@@ -34,3 +34,6 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Task workspace docs
+docs/tasks/
