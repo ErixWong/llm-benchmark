@@ -24,6 +24,66 @@ function escapeHtml(str) {
 }
 
 /**
+ * Markdown 内联文本转义：中和内联 HTML 并压平换行（错误文本可能来自服务端）
+ * @param {*} str
+ * @returns {string}
+ */
+function inlineMarkdown(str) {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .replace(/[<>]/g, c => ({ '<': '&lt;', '>': '&gt;' }[c]))
+    .replace(/\s*\n\s*/g, ' ');
+}
+
+/**
+ * 序列化嵌入 <script> 块的数据，防止提前闭合 script 或行分隔符注入
+ * （错误信息等字符串来自服务端，不能直接拼进脚本上下文）
+ * @param {*} value - 任意可序列化值
+ * @returns {string}
+ */
+function jsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
+ * 指标口径版本。字段含义发生不兼容变更时 +1
+ * v1: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
+ */
+const METRICS_VERSION = 1;
+
+/**
+ * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）
+ * @returns {boolean}
+ */
+function shouldIncludeOutputText() {
+  return /^(1|true|yes)$/i.test(process.env.REPORT_INCLUDE_TEXT || '');
+}
+
+/**
+ * 从结果副本剥离 outputText / reasoningText（浅拷贝 + 映射 raw/failed 条目，不修改入参）
+ * @param {Object} results
+ * @returns {Object}
+ */
+function stripOutputText(results) {
+  const stripped = { ...results };
+  if (stripped.tokenSpeed) {
+    const tokenSpeed = { ...stripped.tokenSpeed };
+    for (const key of ['raw', 'failed']) {
+      if (Array.isArray(tokenSpeed[key])) {
+        tokenSpeed[key] = tokenSpeed[key].map(({ outputText, reasoningText, ...rest }) => rest);
+      }
+    }
+    stripped.tokenSpeed = tokenSpeed;
+  }
+  return stripped;
+}
+
+/**
  * 生成测试报告
  * @param {Object} results - 测试结果
  * @param {string} outputDir - 输出目录
@@ -65,7 +125,8 @@ export async function generateReport(results, outputDir = './results') {
  */
 async function generateJsonReport(results, outputDir, baseName) {
   const filePath = path.join(outputDir, `${baseName}.json`);
-  await fs.writeFile(filePath, JSON.stringify(results, null, 2));
+  const payload = shouldIncludeOutputText() ? results : stripOutputText(results);
+  await fs.writeFile(filePath, JSON.stringify({ metricsVersion: METRICS_VERSION, ...payload }, null, 2));
   return filePath;
 }
 
@@ -110,17 +171,20 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     lines.push(`| 中位数 | ${results.tokenSpeed.metrics.tps.median.toFixed(2)} tokens/s |`);
     lines.push(`| 最小 | ${results.tokenSpeed.metrics.tps.min.toFixed(2)} tokens/s |`);
     lines.push(`| 最大 | ${results.tokenSpeed.metrics.tps.max.toFixed(2)} tokens/s |`);
-    lines.push(`| 整体吞吐 | ${results.tokenSpeed.metrics.throughputTps ? results.tokenSpeed.metrics.throughputTps.toFixed(2) : '-'} tokens/s |`);
+    lines.push(`| 整体吞吐（墙钟） | ${results.tokenSpeed.metrics.throughputTps ? results.tokenSpeed.metrics.throughputTps.toFixed(2) : '-'} tokens/s |`);
     lines.push('');
 
-    lines.push('### 首Token延迟 (TTFT)');
+    lines.push('### 首Token延迟');
     lines.push('');
     lines.push('| 指标 | 值 |');
     lines.push('|------|-----|');
-    lines.push(`| 平均 | ${results.tokenSpeed.metrics.ttft.mean.toFixed(0)} ms |`);
-    lines.push(`| 中位数 | ${results.tokenSpeed.metrics.ttft.median.toFixed(0)} ms |`);
-    lines.push(`| 最小 | ${results.tokenSpeed.metrics.ttft.min.toFixed(0)} ms |`);
-    lines.push(`| 最大 | ${results.tokenSpeed.metrics.ttft.max.toFixed(0)} ms |`);
+    lines.push(`| TTFT 平均（含推理） | ${results.tokenSpeed.metrics.ttft.mean.toFixed(0)} ms |`);
+    lines.push(`| TTFT 中位数（含推理） | ${results.tokenSpeed.metrics.ttft.median.toFixed(0)} ms |`);
+    lines.push(`| TTFT 最小（含推理） | ${results.tokenSpeed.metrics.ttft.min.toFixed(0)} ms |`);
+    lines.push(`| TTFT 最大（含推理） | ${results.tokenSpeed.metrics.ttft.max.toFixed(0)} ms |`);
+    if (results.tokenSpeed.metrics.ttfo?.values?.length > 0) {
+      lines.push(`| TTFO 平均（首个可见内容） | ${results.tokenSpeed.metrics.ttfo.mean.toFixed(0)} ms |`);
+    }
     lines.push('');
 
     lines.push('### 输出Token统计');
@@ -129,7 +193,19 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     lines.push('|------|-----|');
     lines.push(`| 平均 | ${results.tokenSpeed.metrics.outputTokens.mean.toFixed(0)} tokens |`);
     lines.push(`| 中位数 | ${results.tokenSpeed.metrics.outputTokens.median.toFixed(0)} tokens |`);
+    if (results.tokenSpeed.metrics.reasoningTokens?.total > 0) {
+      lines.push(`| 推理Token 平均 | ${results.tokenSpeed.metrics.reasoningTokens.mean.toFixed(0)} tokens |`);
+      lines.push(`| 内容Token 平均 | ${results.tokenSpeed.metrics.contentTokens.mean.toFixed(0)} tokens |`);
+    }
     lines.push('');
+    if (results.tokenSpeed.metrics.tokenSource) {
+      const ts = results.tokenSpeed.metrics.tokenSource;
+      lines.push(`> Token 计数来源：服务端 usage ${ts.api} / 客户端 tokenizer 估算 ${ts.tokenizer}`);
+      if (ts.api === 0) {
+        lines.push('> 服务端未返回 usage，绝对 token 数为客户端 tokenizer 估算值。');
+      }
+      lines.push('');
+    }
     
     // 错误统计
     if (results.tokenSpeed.errors && results.tokenSpeed.errors.total > 0) {
@@ -147,7 +223,7 @@ async function generateMarkdownReport(results, outputDir, baseName) {
         lines.push('**错误详情:**');
         lines.push('');
         for (const detail of results.tokenSpeed.errors.details.slice(0, 10)) {  // 最多显示10个
-          lines.push(`- 请求 #${detail.requestIndex + 1}: ${detail.error}`);
+          lines.push(`- 请求 #${detail.requestIndex + 1}: ${inlineMarkdown(detail.error)}`);
         }
         if (results.tokenSpeed.errors.details.length > 10) {
           lines.push(`- ... 还有 ${results.tokenSpeed.errors.details.length - 10} 个错误`);
@@ -448,7 +524,7 @@ function generateChartScripts(chartData) {
     // 请求时间线图（甘特图样式）- 使用水平浮动柱状图
     const timelineCtx = document.getElementById('timelineChart');
     if (timelineCtx) {
-      const timelineData = ${JSON.stringify(ts.timeline)};
+      const timelineData = ${jsonForScript(ts.timeline)};
       const maxTime = Math.max(...timelineData.map(d => d.receiveOffset)) / 1000;
       const requestCount = timelineData.length;
       
@@ -591,10 +667,10 @@ function generateChartScripts(chartData) {
       new Chart(tpsCtx, {
         type: 'line',
         data: {
-          labels: ${JSON.stringify(ts.labels)},
+          labels: ${jsonForScript(ts.labels)},
           datasets: [{
             label: 'TPS (tokens/s)',
-            data: ${JSON.stringify(ts.tps)},
+            data: ${jsonForScript(ts.tps)},
             borderColor: '#3182ce',
             backgroundColor: 'rgba(49, 130, 206, 0.1)',
             borderWidth: 2,
@@ -645,10 +721,10 @@ function generateChartScripts(chartData) {
       new Chart(ttftCtx, {
         type: 'line',
         data: {
-          labels: ${JSON.stringify(ts.labels)},
+          labels: ${jsonForScript(ts.labels)},
           datasets: [{
             label: 'TTFT (ms)',
-            data: ${JSON.stringify(ts.ttft)},
+            data: ${jsonForScript(ts.ttft)},
             borderColor: '#ed8936',
             backgroundColor: 'rgba(237, 137, 54, 0.1)',
             borderWidth: 2,
@@ -697,15 +773,15 @@ function generateChartScripts(chartData) {
     const outputCtx = document.getElementById('outputChart');
     if (outputCtx) {
       // 每个请求的实际输入Token数
-      const inputTokensArray = ${JSON.stringify(ts.inputTokens)};
+      const inputTokensArray = ${jsonForScript(ts.inputTokens)};
       
       new Chart(outputCtx, {
         type: 'bar',
         data: {
-          labels: ${JSON.stringify(ts.labels)},
+          labels: ${jsonForScript(ts.labels)},
           datasets: [{
             label: '输出Tokens',
-            data: ${JSON.stringify(ts.outputTokens)},
+            data: ${jsonForScript(ts.outputTokens)},
             backgroundColor: 'rgba(128, 90, 213, 0.8)',
             borderColor: 'rgba(128, 90, 213, 1)',
             borderWidth: 1
@@ -796,8 +872,8 @@ function generateTokenSpeedHtml(results, chartData) {
           <div class="config-table" style="background: #fff; border-radius: 8px; padding: 0; border: 1px solid #e2e8f0;">
             <table style="background: white; border-radius: 6px; overflow: hidden; font-size: 13px;">
               <tr><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">参数</th><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">值</th></tr>
-              <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${r.config.url || 'N/A'}</td></tr>
-              <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${r.config.model || 'N/A'}</span></td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${escapeHtml(r.config.url) || 'N/A'}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${escapeHtml(r.config.model) || 'N/A'}</span></td></tr>
               ${r.config.sampleCount > 0 ? `<tr><td style="border-bottom: 1px solid #edf2f7;">Sample数量</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
               <tr><td style="border-bottom: 1px solid #edf2f7;">最大输出Token数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.maxOutputTokens}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">并发模式</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'}</td></tr>
@@ -812,7 +888,11 @@ function generateTokenSpeedHtml(results, chartData) {
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.throughputTps ? r.metrics.throughputTps.toFixed(1) : '-'}</div>
-                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">整体吞吐 TPS</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">整体吞吐 TPS (墙钟)</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${r.metrics.ttfo && r.metrics.ttfo.values && r.metrics.ttfo.values.length > 0 ? (r.metrics.ttfo.mean / 1000).toFixed(2) : '-'}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均 TTFO</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #3182ce;">${(r.metrics.ttft.mean / 1000).toFixed(2)}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
