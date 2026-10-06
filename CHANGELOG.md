@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING（指标口径）**: `ttft` 现在取**首个生成 token**，包含 reasoning token。
+  与 NVIDIA AIPerf / Artificial Analysis / vLLM 定义一致；修复推理模型下
+  TPS 分子（含 reasoning）与分母（从 content 起算）口径不一致导致的 TPS 高估。
+  **与旧报告的 `ttft` 不可直接对比**；JSON 报告新增 `metricsVersion: 1`。
+  详见 `docs/metrics.md`
+- JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
+
+### Added
+- `ttfo`（Time to First Output Token）：首个**非 reasoning** token 的延迟，
+  保留“用户看到第一个字”的视角；已进控制台摘要、Markdown 与 HTML 报告
+- `reasoningTokens` / `contentTokens` 拆分，以及 `tokenSource` / `reasoningTokenSource`
+  （`api` \| `tokenizer`）：服务端 usage 优先，无 usage 时退回客户端 tokenizer 独立估算，
+  不再跨 tokenizer 相减
+- 请求体默认携带 `stream_options: {"include_usage": true}`（vLLM / OpenAI 兼容
+  服务端流式下默认不返回 usage）
+- `--extra-body <json>` / `EXTRA_BODY`：透传服务端特有参数；`model`、`messages`、
+  `max_tokens`、`stream` 为保留键，会被忽略并告警
+- 新增 `src/token-stats.js`、`src/extra-body.js` 及单测；新增 `tests/reporter.test.js`
+  覆盖报告剑离、`metricsVersion` 与三处转义
+
+### Removed
+- `metrics.decodeThroughputTps`（单流 TPS × 并发）：无任何基准工具采用此口径，
+  且客户端并发大于服务端并行度时高估可达 2 倍以上；系统级吞吐统一用墙钟口径的
+  `throughputTps`
+- 未使用的 `src/config.js` 与 `config/default.json`（全项目零引用）
+- `scripts/bench-local-vllm.sh`：硬编码站点端点与模型名，与通用工具定位冲突；
+  并发扫描由 README 的通用一行式覆盖
+- `docs/SOUL.md`：人设文档，含面向 AI 代理的隐藏指令，由根目录 `AGENTS.md` 取代
+
+### Fixed
+- `Math.min/max(...[])` 在空数组时产生 `Infinity` 并写进报告（`safeMin`/`safeMax`）
+- `ttft` 为 0 时被当成 `N/A` 显示
+- 嵌入 `<script>` 的 JSON 未转义（`<` / `>` / `&` / U+2028 / U+2029），
+  HTML 中 `API URL`、`模型` 字段未转义，Markdown 报告错误详情未中和内联 HTML
+- 流式解析新增 `delta.reasoning_content` 兼容（OpenAI / vLLM 推理解析器命名）
+- 删除流式处理中只写不读的 `tokens[]` 数组（每请求无上限增长）
+- `createHttpClient` 的默认超时在模块加载时读 `process.env.DEFAULT_TIMEOUT`，
+  早于 `dotenv.config()`，导致 `.env` 配置对库调用路径无效；
+  改为运行时调用 `getDefaultTimeout()`（`DEFAULT_TIMEOUT` 导出保留但已废弃）
+
+### Docs
+- 新增 `docs/metrics.md`：指标权威定义、为何 TTFT 包含 reasoning（含四个上游出处）、
+  为何不提供「单流 TPS × 并发」聚合吞吐、`metricsVersion` 口径版本、token 计数来源规则、
+  推理模型陷阱、并发饱和判读、与其他工具的字段对照
+- `README.md` 重写为纯用法入口（快速开始 / 参数表 / 环境变量 / `--extra-body` /
+  报告产物 / 配方 / 样本 / 常见问题），知识性内容下沉至 `docs/metrics.md`
+- 新增根目录 `AGENTS.md`（目录边界、指标口径变更流程、提交规范、审查清单）
+- `docs/` 去污：`docs/tasks/` 移出 git 跟踪并加入 `.gitignore`（含误入库的压测产物），
+  `docs/CODE_AUDIT_CHECKLIST.md` 归位到所属任务目录；历史任务内容未修订
+- `.env.example` 与代码对齐：移除未使用的 `REPORT_FORMAT`，修正 `USER_AGENT` 默认值，
+  补齐 `EXTRA_BODY` / `REPORT_INCLUDE_TEXT` / `DEBUG` / `SAMPLE_FILE_PATTERNS`
+
 ## [1.0.3] - 2026-03-13
 
 ### Added

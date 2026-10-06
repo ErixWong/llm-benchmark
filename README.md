@@ -1,177 +1,171 @@
 # LLM API Benchmark
 
-用于压测 LLM API 输出速度的命令行工具，当前项目实际提供的是默认 `start` 命令，用来执行 Token 生成速度测试。
+针对 OpenAI Chat Completions 兼容端点的命令行压测工具：测量 token 生成速度、首 token 延迟、
+吞吐与成功率，产出 JSON / Markdown / HTML 报告。指标口径与 NVIDIA AIPerf、`vllm bench serve`、
+Artificial Analysis 对齐，对推理模型（reasoning / thinking）有一等支持。
 
-## 功能特性
+Node.js >= 18，ESM，无构建步骤。指标定义与结果判读见 [`docs/metrics.md`](docs/metrics.md)。
 
-- Token 生成速度测试：统计 TPS、TTFT、成功率等核心指标
-- 并发模式支持：支持 `batch` 和 `pipeline` 两种请求调度方式
-- 大上下文样本测试：可从 `data/samples/` 随机抽取多个文本样本拼接输入
-- 报告输出：测试完成后自动在 `results/` 生成 HTML、JSON、Markdown 报告
-- Dry-run 校验：可先验证配置和参数，不真正发请求
-
-## 运行前提
-
-- Node.js `>= 18`
-- 可访问的兼容 OpenAI Chat Completions 的 API 地址
-- 可用模型名，例如 `gpt-4o-mini`、`glm-4.5-air` 等
-
-## 5 分钟上手
-
-### 1. 安装依赖
+## 快速开始
 
 ```bash
 npm install
+cp .env.example .env                 # 至少填 API_BASE_URL / API_KEY / API_MODEL
+node src/index.js --dry-run          # 只校验配置，不发请求
+node src/index.js -c 1 -r 1 -n 0 -m 512
 ```
 
-### 2. 复制环境变量模板
-
-macOS / Linux:
+不用 `.env` 也可以全部走命令行：
 
 ```bash
-cp .env.example .env
+node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
+  -c 1 -r 3 -n 0 -m 512
 ```
 
-PowerShell:
+## 命令行参数
 
-```powershell
-Copy-Item .env.example .env
-```
+只有默认子命令 `start`（可省略）。
 
-### 3. 填写最小必需配置
+| 选项 | 环境变量 | 默认值 | 说明 |
+|------|----------|--------|------|
+| `-u, --url <url>` | `API_BASE_URL` | **必填** | API 端点，支持自动补全路径 |
+| `-k, --api-key <key>` | `API_KEY` | 无 | 提供时发送 `Authorization: Bearer <key>` |
+| `--model <model>` | `API_MODEL` | **必填** | 模型名 |
+| `-c, --concurrency <n>` | `DEFAULT_CONCURRENCY` | `4` | 并发数 |
+| `-r, --rounds <n>` | `ROUNDS` | `5` | 采样轮数，**总请求数 = 并发 × 轮数** |
+| `-n, --sample-count <n>` | `SAMPLE_COUNT` | `0` | 每次请求抽取的样本数，`0` = 内置简单 prompt |
+| `-m, --max-output <n>` | `MAX_OUTPUT_TOKENS` | `30000` | `max_tokens` |
+| `--concurrency-mode <mode>` | `CONCURRENCY_MODE` | `pipeline` | `pipeline`（完成一个补一个）/ `batch`（整批等） |
+| `-t, --timeout <sec>` | `DEFAULT_TIMEOUT`（毫秒） | `90` | 单次请求超时 |
+| `--system-prompt <prompt>` | — | 无 | 自定义 system prompt |
+| `--extra-body <json>` | `EXTRA_BODY` | 空 | 透传服务端特有参数，见下文 |
+| `-o, --output <dir>` | `REPORT_OUTPUT_DIR` | `./results` | 报告输出目录 |
+| `-q, --quiet` | — | `false` | 只输出最终摘要 |
+| `--dry-run` | — | — | 只打印并校验配置，不发请求 |
 
-至少需要配置下面 3 项：
+表中的默认值是**未配置 `.env` 时**的代码回退值。
 
-```env
-API_BASE_URL=https://api.example.com/v1/chat/completions
-API_KEY=your-api-key-here
-API_MODEL=gpt-4o-mini
-```
+其他行为：
 
-其他参数可以先保持 `.env.example` 默认值。
+- **URL 自动补全**：`https://x/v1` → `https://x/v1/chat/completions`；`https://x` → `https://x/v1/chat/completions`；已含完整路径则原样使用
+- **重试**：最多 3 次，指数退避 1s → 2s → 4s；仅针对 `408/429/500/502/503/504` 与连接类错误；`429` 尊重 `Retry-After`
+- **预热**：正式计时前发 1 次预热请求，不计入任何指标；预热收到 4xx/5xx 会直接终止
+- **Token 计数**：默认携带 `stream_options.include_usage` 以获取服务端精确计数；端点不支持时按报错提示关闭（见 `docs/metrics.md`）
 
-### 4. 先做一次配置检查
+## 环境变量
+
+| 变量 | 用途 |
+|------|------|
+| `API_BASE_URL` / `API_KEY` / `API_MODEL` | 端点、密钥、模型 |
+| `USER_AGENT` | 请求 UA，默认 `llm-benchmark/1.0.0` |
+| `DEFAULT_CONCURRENCY` / `ROUNDS` / `MAX_OUTPUT_TOKENS` | 并发 / 轮数 / `max_tokens` |
+| `CONCURRENCY_MODE` | `pipeline` \| `batch` |
+| `DEFAULT_TIMEOUT` | 请求超时，**单位毫秒** |
+| `SAMPLE_COUNT` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
+| `EXTRA_BODY` | 透传请求体参数（JSON 字符串） |
+| `REPORT_OUTPUT_DIR` / `REPORT_TITLE` | 输出目录 / 报告标题（默认取模型名） |
+| `REPORT_INCLUDE_TEXT` | `true` 时把模型输出全文写入 JSON 报告，默认不写 |
+| `DEBUG` | 置任意值时打印流式解析错误 |
+
+## 指标一览
+
+| 字段 | 一句话 |
+|------|--------|
+| `ttft` | 到**首个生成 token**的时延（推理模型的 reasoning 就是第一个 token） |
+| `ttfo` | 到首个**可见答案 token**的时延 |
+| `tps` | 单请求解码速度（不含 TTFT） |
+| `throughputTps` | 系统级吞吐：总输出 token ÷ 墙钟时间 |
+
+**定义依据、口径版本（`metricsVersion`）、token 计数来源、并发饱和怎么判读** ——
+全部在 [`docs/metrics.md`](docs/metrics.md)。
+
+> ⚠️ `ttft` 口径已于 2026-10 变更，与旧报告不可直接对比，详见 `CHANGELOG.md`。
+
+## `--extra-body`
+
+透传 OpenAI 标准字段之外的服务端特有参数：
 
 ```bash
-node src/index.js --dry-run
+# 关闭 GLM / Qwen 思考模式
+node src/index.js --extra-body '{"chat_template_kwargs":{"enable_thinking":false}}'
+
+# 组合多个参数
+node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":{"type":"disabled"}}}'
 ```
 
-看到 `配置验证通过` 就说明当前参数可用于正式测试。
+`model`、`messages`、`max_tokens`、`stream` 由压测工具自己控制，写在这里会被**忽略并告警**
+（覆盖 `stream:false` 会让流式解析拿不到数据，整轮指标作废）。
 
-### 5. 运行一次最小测试
+## 报告产物
+
+每次运行输出到 `<输出目录>/report-<时间戳>/`：
+
+| 文件 | 内容 |
+|------|------|
+| `benchmark-<时间戳>.json` | `metricsVersion` + `config` / `metrics` / `errors` / `raw`（每请求明细）/ `failed` |
+| `benchmark-<时间戳>.md` | Markdown 摘要 |
+| `benchmark-<时间戳>.html` | TPS / TTFT 分布图与请求甘特图 |
+
+模型输出全文默认不写入报告；需要时设 `REPORT_INCLUDE_TEXT=true`。
+
+## 常用配方
+
+| 目的 | 命令 |
+|------|------|
+| 连通性检查 | `--dry-run` |
+| 单流基线 | `-c 1 -r 3 -n 0 -m 512` |
+| 并发扫描 | `for c in 1 4 8 16; do node src/index.js -c $c -r 2 -n 0 -m 512 -o results/sweep/c$c; done` |
+| 最差批次表现 | `--concurrency-mode batch` |
+| 大上下文输入 | `-n 2`（每次随机拼 2 个样本） |
+
+> 固定输入反复压同一服务端会命中前缀缓存导致吞吐虚高；需要干净数据时换输入或清服务端缓存。
+
+## 大上下文样本
+
+`-n > 0` 时递归扫描 `data/` 下的 `.txt`，按文件名匹配：含 `-8k` / `-16k`，
+或以 `sample-` / `novel-` / `tech-news-` / `conversation-` / `code-samples-` / `multimodal-` 开头。
+可用 `SAMPLE_FILE_PATTERNS` 覆盖规则；`-n 0` 时使用内置 prompt，不读文件。
+
+仓库自带 22 个样本（`data/samples/{code,dialogue,literature,mixed,news,tech}/`），
+实测单个 **4.7k ～ 15.3k token**（中位约 7.5k）——文件名里的 `8k` 是标称值。
+
+## 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| `TPS = 0` / `TTFT = N/A` | 确认端点正常流式返回；推理模型见下一条 |
+| `ttfo` 为空、答案为空 | `-m` 太小，输出全被思考占满：加大 `-m` 或关闭思考模式 |
+| token 数看着不对 | 看摘要「Token来源」：`客户端估算` 表示端点没回 usage，绝对值是近似值 |
+| 请求 400 | 端点不接受 `stream_options`，用 `--extra-body '{"stream_options":{"include_usage":false}}'` |
+| `没有找到样本文件` | `-n > 0` 但 `data/` 下无匹配 `.txt`：检查文件名规则或改 `-n 0` |
+| 超时 | 长输出增大 `-t`；`.env` 里 `DEFAULT_TIMEOUT` 单位是毫秒 |
+| 想看流解析细节 | `DEBUG=1 node src/index.js ...` |
+
+## 开发与测试
 
 ```bash
-node src/index.js -c 1 -r 1 -n 0
+npx vitest run          # 全部测试
+npx vitest              # watch 模式
 ```
 
-这条命令会使用默认 `start` 命令，执行 1 并发、1 轮采样、简单 prompt 的最小测试。测试完成后，报告会输出到 `results/report-时间戳/`。
-
-## 常用命令
-
-### 查看帮助
-
-```bash
-node src/index.js --help
-```
-
-### 使用默认命令运行测试
-
-```bash
-node src/index.js -c 4 -r 5 -n 0
-```
-
-### 显式使用 `start` 命令
-
-```bash
-node src/index.js start -c 4 -r 5 -n 2
-```
-
-### 使用批次模式
-
-```bash
-node src/index.js start -c 2 -r 3 --concurrency-mode batch
-```
-
-### 只校验配置，不发请求
-
-```bash
-node src/index.js --dry-run
-```
-
-### 使用 npm 脚本
-
-```bash
-npm run benchmark -- --dry-run
-npm run benchmark -- -c 2 -r 2 -n 0
-```
-
-注意：当前 `package.json` 里没有 `npm run concurrency` 或 `npm run token-speed`，实际可用的是 `npm run benchmark` 和 `npm start`。
-
-## 参数说明
-
-当前 CLI 只有一个默认测试命令：`start`。
-
-```bash
-node src/index.js start [options]
-
-选项:
-  -c, --concurrency <number>    并发数，默认读取 DEFAULT_CONCURRENCY 或 4
-  -r, --rounds <number>         采样轮数，总采样数 = 并发数 × 轮数
-  -n, --sample-count <number>   每次请求随机抽取的样本数量，0 表示使用简单 prompt
-  -m, --max-output <number>     最大输出 Token 数
-  --concurrency-mode <mode>     并发模式：batch 或 pipeline
-  -t, --timeout <seconds>       单次请求超时时间，单位秒
-  -u, --url <url>               API 地址，未传时读取 API_BASE_URL
-  -k, --api-key <key>           API Key，未传时读取 API_KEY
-  --model <model>               模型名，未传时读取 API_MODEL
-  --system-prompt <prompt>      自定义 system prompt
-  -o, --output <dir>            报告输出目录，默认 `./results`
-  -q, --quiet                   静默模式，只输出最终结果
-  --dry-run                     仅校验配置，不实际执行请求
-```
-
-## 参数选择建议
-
-- 先验证配置：`--dry-run`
-- 快速连通性测试：`-c 1 -r 1 -n 0`
-- 小规模性能采样：`-c 2 -r 3 -n 0`
-- 大上下文测试：`-c 2 -r 3 -n 2`
-- 降低接口压力：使用 `--concurrency-mode batch`
-
-## 样本文件
-
-当 `-n` 大于 `0` 时，程序会扫描 `data/` 目录下的 `.txt` 样本，并按文件名规则筛选可用样本。当前仓库里的样本主要位于 `data/samples/`，包含以下类别：
-
-- `data/samples/tech/` - 技术文档样本
-- `data/samples/code/` - 代码样本
-- `data/samples/dialogue/` - 对话样本
-- `data/samples/literature/` - 文学样本
-- `data/samples/news/` - 新闻样本
-- `data/samples/mixed/` - 混合样本
-
-如果 `-n 0`，则不会读取样本文件，而是使用内置简单 prompt。
-
-## 项目结构
+工程约定（目录边界、指标口径变更流程、提交规范、审查清单）见 [`AGENTS.md`](AGENTS.md)。
 
 ```
-├── src/                     # 源代码
-│   ├── index.js             # CLI 入口，默认 start 命令
-│   ├── llm-benchmark.js     # 测试执行核心
-│   ├── context-generator.js # Token 统计与上下文处理
-│   ├── http-client.js       # HTTP 请求客户端
-│   ├── config.js            # 配置加载
-│   └── reporter.js          # 报告生成
-├── data/                    # Prompt 与样本目录
-│   └── samples/             # 大上下文测试样本
-├── docs/                    # 文档与任务记录
-├── tests/                   # 测试
-└── results/                 # 测试结果输出（gitignored）
+├── src/          源码（index / llm-benchmark / token-stats / extra-body / http-client / reporter / context-generator）
+├── tests/        vitest 用例
+├── docs/         设计与用法文档
+├── data/samples/ 大上下文样本
+└── results/      报告输出（gitignored）
 ```
 
-## 文档
+## 相关文档
 
-- 测试方法与指标说明：`docs/README.md`
-- 环境变量参考：`.env.example`
+| 文档 | 内容 |
+|------|------|
+| [`docs/metrics.md`](docs/metrics.md) | 指标权威定义、口径版本、token 计数来源、并发结果判读 |
+| [`AGENTS.md`](AGENTS.md) | 工程约定与审查清单 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 变更历史（含指标口径的 BREAKING 记录） |
+| [`docs/README.md`](docs/README.md) | 通用压测方法论参考。**含本项目未实现的负载/压力/浸泡/峰值测试类型**，不作为本工具的行为说明 |
 
 ## License
 
