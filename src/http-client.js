@@ -7,8 +7,21 @@ import axios from 'axios';
 import { HttpAgent, HttpsAgent } from 'agentkeepalive';
 import chalk from 'chalk';
 
-// 从环境变量读取超时配置，默认90秒
-const DEFAULT_TIMEOUT = parseInt(process.env.DEFAULT_TIMEOUT, 10) || 90000;
+// 兜底超时（毫秒）。注意：模块级求值早于 index.js 里的 dotenv.config()，
+// 所以想拿到 .env 里的 DEFAULT_TIMEOUT 必须在运行时调用 getDefaultTimeout()
+const FALLBACK_TIMEOUT = 90000;
+
+/**
+ * 读取默认超时（毫秒）：优先 DEFAULT_TIMEOUT 环境变量，非法或缺失时用兜底值
+ * @returns {number}
+ */
+export function getDefaultTimeout() {
+  const parsed = parseInt(process.env.DEFAULT_TIMEOUT, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : FALLBACK_TIMEOUT;
+}
+
+/** @deprecated 语义上仅是兜底值，请使用 getDefaultTimeout() */
+const DEFAULT_TIMEOUT = FALLBACK_TIMEOUT;
 
 /**
  * 自动补全API URL
@@ -105,7 +118,7 @@ const DEFAULT_RETRY_CONFIG = {
 export function createHttpClient(options = {}) {
   let {
     baseURL = '',
-    timeout = DEFAULT_TIMEOUT,  // 使用环境变量配置的默认超时
+    timeout = getDefaultTimeout(),  // 运行时读取，能拿到 .env 配置
     headers = {},
     retryConfig = {},
     useKeepAlive = true  // 是否使用Keep-Alive

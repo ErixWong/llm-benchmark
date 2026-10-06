@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { normalizeApiUrl, validateParams, tokenSpeedTestRules } from '../src/http-client.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { normalizeApiUrl, validateParams, tokenSpeedTestRules, getDefaultTimeout } from '../src/http-client.js';
 
 describe('http-client', () => {
   describe('normalizeApiUrl', () => {
@@ -56,6 +56,31 @@ describe('http-client', () => {
       }, tokenSpeedTestRules);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe('getDefaultTimeout', () => {
+    let original;
+    beforeEach(() => { original = process.env.DEFAULT_TIMEOUT; });
+    afterEach(() => {
+      if (original === undefined) delete process.env.DEFAULT_TIMEOUT;
+      else process.env.DEFAULT_TIMEOUT = original;
+    });
+
+    it('reads DEFAULT_TIMEOUT at call time (not module load time)', () => {
+      process.env.DEFAULT_TIMEOUT = '300000';
+      expect(getDefaultTimeout()).toBe(300000);
+    });
+
+    it('falls back to 90000 for missing or invalid values', () => {
+      delete process.env.DEFAULT_TIMEOUT;
+      expect(getDefaultTimeout()).toBe(90000);
+      process.env.DEFAULT_TIMEOUT = 'abc';
+      expect(getDefaultTimeout()).toBe(90000);
+      process.env.DEFAULT_TIMEOUT = '0';
+      expect(getDefaultTimeout()).toBe(90000);
+      process.env.DEFAULT_TIMEOUT = '-5';
+      expect(getDefaultTimeout()).toBe(90000);
     });
   });
 });
