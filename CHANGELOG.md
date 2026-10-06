@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/bench-local-vllm.sh`：硬编码站点端点与模型名，与通用工具定位冲突；
   并发扫描由 README 的通用一行式覆盖
 - `docs/SOUL.md`：人设文档，含面向 AI 代理的隐藏指令，由根目录 `AGENTS.md` 取代
+- `docs/README.md`：通用 API 性能测试标准文档，与本项目实现不符（P50/P90/P99、RPS、
+  按 duration/rampUp 加压、CPU/内存资源指标、「P90 < 200ms 即优秀」的 REST 阈值、
+  autocannon/k6/JMeter 工具表、`{type:'load', concurrency:[...]}` 这类看似配置
+  实则无人读取的示例），留着必然误导。其中仍有价值的部分已并入 `docs/metrics.md`：
+  范围边界、测量前置条件与陷阱（含 REST 阈值不适用于 LLM）、ITL 未实现的声明；
+  未保留模型规模的 TPS/TTFT 参考区间（无出处的主观数定，易被当成验收标准）
 
 ### Fixed
 - `Math.min/max(...[])` 在空数组时产生 `Infinity` 并写进报告（`safeMin`/`safeMax`）

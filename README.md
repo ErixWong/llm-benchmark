@@ -81,6 +81,10 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 
 > ⚠️ `ttft` 口径已于 2026-10 变更，与旧报告不可直接对比，详见 `CHANGELOG.md`。
 
+**本工具不做**：按持续时间 / rampUp 加压、RPS 与 P50/P90/P99 分位数、ITL（token 间延迟）、
+服务端资源指标（GPU / 显存 / 排队深度）。原因与替代工具见
+[`docs/metrics.md`](docs/metrics.md) 的「范围边界」一节。
+
 ## `--extra-body`
 
 透传 OpenAI 标准字段之外的服务端特有参数：
@@ -162,10 +166,9 @@ npx vitest              # watch 模式
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/metrics.md`](docs/metrics.md) | 指标权威定义、口径版本、token 计数来源、并发结果判读 |
+| [`docs/metrics.md`](docs/metrics.md) | 指标权威定义、口径版本、token 计数来源、并发结果判读、测量陷阱与范围边界 |
 | [`AGENTS.md`](AGENTS.md) | 工程约定与审查清单 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 变更历史（含指标口径的 BREAKING 记录） |
-| [`docs/README.md`](docs/README.md) | 通用压测方法论参考。**含本项目未实现的负载/压力/浸泡/峰值测试类型**，不作为本工具的行为说明 |
 
 ## License
 

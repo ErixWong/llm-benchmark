@@ -103,6 +103,27 @@ node src/index.js --extra-body '{"chat_template_kwargs":{"enable_thinking":false
 要确认服务端实际并行度，应对照服务端自身指标（如 vLLM `/metrics` 的
 `num_requests_running` / `num_requests_waiting`），而不是从客户端反推。
 
+## 测量前置条件与常见陷阱
+
+| 条件 | 说明 |
+|------|------|
+| **网络往返** | RTT 直接计入 `ttft`。跳地域、跳网关压测时，`ttft` 反映的是链路而不是服务端 prefill。要与厂商公布数字对比，必须在同机房或本地回环 |
+| **输入分布** | 用 `-n` 拼接与线上量级一致的上下文。内置简单 prompt 只能做连通与上限观测，**不代表服务能力** |
+| **前缀缓存** | 固定输入反复压同一服务端会命中 prefix cache，吞吐可虚高数成。干净数据需换输入或清服务端缓存 |
+| **预热** | 工具默认发 1 次预热请求且不计指标；但首轮仍可能有编译/编译抖动，重要对比建议 `-r` 加大 |
+| **样本量** | 工具只报 mean / median / min / max，**没有 P90/P99**。`-r 5` 这种小样本下分位数无统计意义；要看长尾就用 median 对比 max，并增大 `-r` |
+| **验收阈值** | 不要用 REST API 的「P90 < 200ms 算优秀」这类阈值判 LLM：LLM 的 TTFT 天然在数百毫秒到数秒量级，且与输入长度、是否思考模式强相关。只能做同模型、同输入长度、同并发下的**相对**比较 |
+| **原始数据** | JSON 报告的 `raw` 是逐请求明细。历史趋势对比应基于它重算，而不是只留摘要里的平均数字 |
+
+## 范围边界（本工具不做的事）
+
+| 不做 | 用什么 |
+|------|------|
+| 按持续时间 / rampUp 的加压曲线（本工具按「并发 × 轮数」离散发请求） | AIPerf、guidellm、k6 |
+| RPS/QPS 与 P50/P90/P99 分位数 | 用 `raw` 里的 `requestTime` 自行计算，或用上述工具 |
+| 服务端资源指标（GPU 利用率、显存、KV cache 命中、排队深度） | vLLM `/metrics`、Prometheus + Grafana |
+| 浸泡 / 峰值 / 混沌类测试 | 专用平台；本工具单次运行以秒到分钟计 |
+
 ## 与其他工具的字段对照
 
 | 本工具 | NVIDIA AIPerf | `vllm bench serve` |
@@ -114,5 +135,9 @@ node src/index.js --extra-body '{"chat_template_kwargs":{"enable_thinking":false
 | `outputTokens`（含 reasoning） | `output_sequence_length` | Total generated tokens |
 | `reasoningTokens` | `reasoning_token_count` / `usage_reasoning_tokens` | — |
 | `contentTokens` | `output_token_count` | — |
+| —（**未实现**） | `inter_token_latency` | ITL / TPOT |
 
+> 本工具不提供 **ITL**（token 间延迟）。单请求 `tps` 只是 ITL 的窗口均值倒数，
+> 无法反映 token 间的抖动（首包后的 burst、解码中的卡顿）。需要 ITL 请用 AIPerf 或 guidellm。
+>
 > 各家工具的名词并不统一，**比较结果前先对齐定义**，不要只看名字。
