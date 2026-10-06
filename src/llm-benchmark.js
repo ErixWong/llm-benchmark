@@ -6,7 +6,9 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { generateContext, countMessagesTokens, validateContext } from './context-generator.js';
-import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, DEFAULT_TIMEOUT } from './http-client.js';
+import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, getDefaultTimeout } from './http-client.js';
+import { computeTokenStats } from './token-stats.js';
+import { sanitizeExtraBody } from './extra-body.js';
 
 /**
  * 运行LLM基准测试
@@ -30,7 +32,8 @@ export async function runLlmBenchmarkTest(options) {
     contextRounds = 0,
     warmupRequests = 1,
     sampleCount = 0,  // 选取多少个8k sample组成上下文
-    timeout = DEFAULT_TIMEOUT,  // 请求超时时间（毫秒）
+    timeout = getDefaultTimeout(),  // 请求超时时间（毫秒）
+    extraBody = null,  // 附加请求体参数（如 chat_template_kwargs）
     quiet = false  // 静默模式
   } = options;
 
@@ -157,7 +160,7 @@ export async function runLlmBenchmarkTest(options) {
         } else {
           warmupMessages = contextMessagesList[0];
         }
-        await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens);
+        await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, warmupMessages, maxOutputTokens, extraBody);
       } catch (error) {
         // 检查是否是HTTP错误（4xx/5xx），如果是则停止测试
         if (error.response && error.response.status >= 400) {
@@ -197,7 +200,7 @@ export async function runLlmBenchmarkTest(options) {
       const messages = await getMessagesForRequest(requestIndex);
       
       try {
-        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
         completed++;
         spinner.text = `执行Token速度测试 (${completed}/${samples})`;
         
@@ -276,7 +279,7 @@ export async function runLlmBenchmarkTest(options) {
           (async () => {
             const messages = await getMessagesForRequest(currentRequestIndex);
             try {
-              const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+              const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
               completed++;
               spinner.text = `执行Token速度测试 (${completed}/${samples})`;
               
@@ -317,7 +320,7 @@ export async function runLlmBenchmarkTest(options) {
       const messages = await getMessagesForRequest(i);
       
       try {
-        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens);
+        const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
         
         logRequestCompletion(i + 1, samples, result, false, i + 1);
         
@@ -381,8 +384,12 @@ function logRequestCompletion(current, total, result, isError = false, requestNu
     console.log(chalk.red(`  错误: ${result.error}`));
   } else if (result.success !== false) {
     console.log(`  TPS: ${chalk.green(result.tps.toFixed(2))} tokens/s`);
-    console.log(`  TTFT: ${result.ttft ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
-    console.log(`  输出Token: ${result.outputTokens} tokens`);
+    console.log(`  TTFT: ${result.ttft != null ? result.ttft.toFixed(0) + ' ms' : 'N/A'}`);
+    if (result.ttfo != null) {
+      console.log(`  TTFO (首个可见内容): ${result.ttfo.toFixed(0)} ms`);
+    }
+    const sourceLabel = result.tokenSource === 'api' ? 'api' : 'client';
+    console.log(`  输出Token: ${result.outputTokens} tokens${result.reasoningTokens ? chalk.gray(` (推理 ${result.reasoningTokens} / 内容 ${result.contentTokens})`) : ''} ${chalk.gray(`[${sourceLabel}]`)}`);
     console.log(`  生成时间: ${result.generationTime ? (result.generationTime / 1000).toFixed(2) + ' s' : 'N/A'}`);
     console.log(`  总请求时间: ${result.totalRequestTime} ms`);
   }
@@ -398,19 +405,26 @@ function logRequestCompletion(current, total, result, isError = false, requestNu
  * @param {number} maxOutputTokens - 最大输出Token数
  * @returns {Promise<Object>} 测量结果
  */
-async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens) {
+async function measureTokenSpeed(httpClient, url, userAgent, model, messages, maxOutputTokens, extraBody = null) {
   const requestStart = Date.now();
-  let firstTokenTime = null;
-  let tokens = [];
-  let outputText = '';  // 用于回退计算（只包含content，不含reasoning）
+  let firstTokenTime = null;       // 首个生成 token（含 reasoning），用于 TTFT / TPS
+  let firstOutputTime = null;      // 首个可见 content token，用于 TTFO
+  let outputText = '';             // 可见内容（content）
+  let reasoningText = '';          // 推理内容（reasoning）
 
   try {
     // 构造请求 - 使用流式响应，使用带重试的 httpClient
+    // 显式请求 usage：vLLM / OpenAI 兼容服务端在流式模式下默认不返回 usage，
+    // 不请求的话所有 token 数都会退化成客户端 tokenizer 估算。
+    const { body: extra } = sanitizeExtraBody(extraBody);
+    const streamOptions = { include_usage: true, ...(extra.stream_options || {}) };
     const response = await httpClient.post(url, {
       model: model,
       messages: messages,
       max_tokens: maxOutputTokens,
-      stream: true
+      stream: true,
+      ...extra,
+      stream_options: streamOptions
     }, {
       responseType: 'stream'
     });
@@ -438,30 +452,28 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
                 apiUsage = parsed.usage;
               }
               
-              // 支持标准OpenAI格式和Qwen的reasoning格式
+              // 支持标准OpenAI格式、Qwen/GLM 的 reasoning 格式
               const content = delta.content || '';
-              const reasoning = delta.reasoning || '';
-              
-              // TTFT只计算实际内容的首个Token，不包含推理过程(reasoning)
-              // reasoning是模型的内部思考，用户看不到，所以不应该计入TTFT
+              const reasoning = delta.reasoning || delta.reasoning_content || '';
+              const now = Date.now();
+
+              // 首个 token（无论是 reasoning 还是 content）决定真正的 TTFT：
+              // 对推理模型而言，reasoning 也是模型实际生成的 token，
+              // 因此计入 TTFT 与 TPS 才能正确衡量其生成速度。
               if (content) {
                 if (!firstTokenTime) {
-                  firstTokenTime = Date.now();
+                  firstTokenTime = now;
                 }
-                tokens.push({
-                  time: Date.now(),
-                  content: content,
-                  type: 'content'
-                });
+                if (!firstOutputTime) {
+                  firstOutputTime = now;
+                }
                 outputText += content;
               }
-              // 推理内容单独处理，不计入TTFT，不计入outputText
               if (reasoning) {
-                tokens.push({
-                  time: Date.now(),
-                  content: reasoning,
-                  type: 'reasoning'
-                });
+                if (!firstTokenTime) {
+                  firstTokenTime = now;
+                }
+                reasoningText += reasoning;
               }
             } catch (e) {
               // 记录解析错误但不中断处理
@@ -476,10 +488,13 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
       response.data.on('end', () => {
         const requestEnd = Date.now();
         const totalRequestTime = requestEnd - requestStart;
+        // TTFT：首个生成 token（reasoning 或 content）到达时间
         const ttft = firstTokenTime ? firstTokenTime - requestStart : null;
-        // 优先使用API返回的token数量，回退到tokenizer计算
-        const outputTokens = apiUsage?.completion_tokens 
-          ?? countMessagesTokens([{ role: 'assistant', content: outputText }]);
+        // TTFO：首个可见 content token（非 reasoning）到达时间
+        const ttfo = firstOutputTime ? firstOutputTime - requestStart : null;
+        // token 统计：有 usage 用服务端口径，否则客户端 tokenizer 独立估算（不做跨源相减）
+        const { outputTokens, contentTokens, reasoningTokens, tokenSource, reasoningTokenSource } =
+          computeTokenStats({ outputText, reasoningText, apiUsage });
         // 输入token优先使用API返回值
         const inputTokensActual = apiUsage?.prompt_tokens 
           ?? countMessagesTokens(messages);
@@ -492,12 +507,17 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
           success: true,
           totalRequestTime,
           ttft,
+          ttfo,
           outputTokens,
+          reasoningTokens,
+          contentTokens,
           inputTokens: inputTokensActual,
           generationTime,
           tps: parseFloat(tps),
           outputText,
-          tokenSource: apiUsage ? 'api' : 'tokenizer'  // 标记token来源
+          reasoningText,
+          tokenSource,           // 输出 token 来源: api | tokenizer
+          reasoningTokenSource   // 推理 token 来源: api | tokenizer
         });
       });
 
@@ -552,13 +572,18 @@ function processTokenSpeedResult(results, config) {
 
   const tpsValues = successResults.map(r => r.tps);
   const ttftValues = successResults.map(r => r.ttft).filter(v => v !== null);
+  const ttfoValues = successResults.map(r => r.ttfo).filter(v => v != null);
   const outputTokensValues = successResults.map(r => r.outputTokens);
+  const reasoningTokensValues = successResults.map(r => r.reasoningTokens || 0);
+  const contentTokensValues = successResults.map(r => r.contentTokens || 0);
   const requestTimeValues = successResults.map(r => r.totalRequestTime);
 
   // 计算整体吞吐量TPS = 总输出tokens / 总测试时间(秒)
   const totalOutputTokens = outputTokensValues.reduce((a, b) => a + b, 0);
   const totalTimeSeconds = config.totalTime / 1000;
   const throughputTps = totalTimeSeconds > 0 ? totalOutputTokens / totalTimeSeconds : 0;
+  // token 计数来源分布（无 usage 时全部为客户端 tokenizer 估算）
+  const apiTokenRequests = successResults.filter(r => r.tokenSource === 'api').length;
 
   return {
     type: 'token-speed',
@@ -568,29 +593,50 @@ function processTokenSpeedResult(results, config) {
     metrics: {
       tps: {
         mean: average(tpsValues),
-        min: Math.min(...tpsValues),
-        max: Math.max(...tpsValues),
+        min: safeMin(tpsValues),
+        max: safeMax(tpsValues),
         median: median(tpsValues),
         values: tpsValues
       },
-      throughputTps,  // 整体吞吐量TPS
+      throughputTps,        // 端到端墙钟吞吐 = 总输出tokens / 总测试时间（与 vLLM/AIPerf 口径一致）
       ttft: {
         mean: average(ttftValues),
-        min: Math.min(...ttftValues),
-        max: Math.max(...ttftValues),
+        min: safeMin(ttftValues),
+        max: safeMax(ttftValues),
         median: median(ttftValues),
         values: ttftValues
       },
+      ttfo: {
+        mean: average(ttfoValues),
+        min: safeMin(ttfoValues),
+        max: safeMax(ttfoValues),
+        median: median(ttfoValues),
+        values: ttfoValues
+      },
       outputTokens: {
         mean: average(outputTokensValues),
-        min: Math.min(...outputTokensValues),
-        max: Math.max(...outputTokensValues),
+        min: safeMin(outputTokensValues),
+        max: safeMax(outputTokensValues),
         median: median(outputTokensValues)
+      },
+      reasoningTokens: {
+        mean: average(reasoningTokensValues),
+        total: reasoningTokensValues.reduce((a, b) => a + b, 0),
+        values: reasoningTokensValues
+      },
+      contentTokens: {
+        mean: average(contentTokensValues),
+        total: contentTokensValues.reduce((a, b) => a + b, 0),
+        values: contentTokensValues
+      },
+      tokenSource: {
+        api: apiTokenRequests,
+        tokenizer: successResults.length - apiTokenRequests
       },
       requestTime: {
         mean: average(requestTimeValues),
-        min: Math.min(...requestTimeValues),
-        max: Math.max(...requestTimeValues),
+        min: safeMin(requestTimeValues),
+        max: safeMax(requestTimeValues),
         median: median(requestTimeValues)
       }
     },
@@ -605,6 +651,24 @@ function processTokenSpeedResult(results, config) {
     raw: successResults,
     failed: failedResults  // 保存失败请求的原始数据
   };
+}
+
+/**
+ * 安全最小值（空数组返回0）
+ * @param {Array} arr - 数值数组
+ * @returns {number}
+ */
+function safeMin(arr) {
+  return arr.length === 0 ? 0 : Math.min(...arr);
+}
+
+/**
+ * 安全最大值（空数组返回0）
+ * @param {Array} arr - 数值数组
+ * @returns {number}
+ */
+function safeMax(arr) {
+  return arr.length === 0 ? 0 : Math.max(...arr);
 }
 
 /**
@@ -647,17 +711,31 @@ function printTokenSpeedSummary(result) {
   console.log(`  中位数: ${formatTps(result.metrics.tps.median)}`);
   console.log(`  最小: ${formatTps(result.metrics.tps.min)}`);
   console.log(`  最大: ${formatTps(result.metrics.tps.max)}`);
-  console.log(`  整体吞吐: ${formatTps(result.metrics.throughputTps)} (总输出tokens / 总测试时间)`);
+  console.log(`  整体吞吐: ${formatTps(result.metrics.throughputTps)} (总输出tokens / 总测试时间，墙钟口径)`);
 
-  console.log(chalk.cyan('\n首Token延迟 (TTFT):'));
-  console.log(`  平均: ${formatLatency(result.metrics.ttft.mean)}`);
-  console.log(`  中位数: ${formatLatency(result.metrics.ttft.median)}`);
-  console.log(`  最小: ${formatLatency(result.metrics.ttft.min)}`);
-  console.log(`  最大: ${formatLatency(result.metrics.ttft.max)}`);
+  console.log(chalk.cyan('\n首Token延迟:'));
+  console.log(`  TTFT (含推理) 平均: ${formatLatency(result.metrics.ttft.mean)}`);
+  console.log(`  TTFT (含推理) 中位数: ${formatLatency(result.metrics.ttft.median)}`);
+  console.log(`  TTFT (含推理) 最小: ${formatLatency(result.metrics.ttft.min)}`);
+  console.log(`  TTFT (含推理) 最大: ${formatLatency(result.metrics.ttft.max)}`);
+  if (result.metrics.ttfo?.values?.length > 0) {
+    console.log(`  TTFO (首个可见内容) 平均: ${formatLatency(result.metrics.ttfo.mean)}`);
+  }
 
   console.log(chalk.cyan('\n输出Token数:'));
   console.log(`  平均: ${result.metrics.outputTokens.mean.toFixed(0)} tokens`);
   console.log(`  中位数: ${result.metrics.outputTokens.median.toFixed(0)} tokens`);
+  if (result.metrics.reasoningTokens?.total > 0) {
+    console.log(`  推理Token总计: ${result.metrics.reasoningTokens.total} tokens (平均 ${result.metrics.reasoningTokens.mean.toFixed(0)}/请求)`);
+    console.log(`  内容Token总计: ${result.metrics.contentTokens.total} tokens (平均 ${result.metrics.contentTokens.mean.toFixed(0)}/请求)`);
+  }
+  const tokenSourceStats = result.metrics.tokenSource;
+  if (tokenSourceStats) {
+    console.log(chalk.gray(`  Token来源: 服务端usage ${tokenSourceStats.api} / 客户端估算 ${tokenSourceStats.tokenizer}`));
+    if (tokenSourceStats.api === 0) {
+      console.log(chalk.gray('  （服务端未返回 usage，绝对 token 数为客户端 tokenizer 估算值）'));
+    }
+  }
 
   console.log(chalk.cyan('\n请求时间:'));
   console.log(`  平均: ${formatLatency(result.metrics.requestTime.mean)}`);

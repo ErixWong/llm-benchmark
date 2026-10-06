@@ -13,6 +13,7 @@ import path from 'path';
 import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
+import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
 
 // 加载环境变量
 dotenv.config();
@@ -133,6 +134,7 @@ program
   .option('-k, --api-key <key>', 'API密钥')
   .option('--model <model>', '模型名称')
   .option('--system-prompt <prompt>', '系统提示词')
+  .option('--extra-body <json>', '附加请求体参数（JSON字符串），例如 \'{"chat_template_kwargs":{"enable_thinking":false}}\'', process.env.EXTRA_BODY || '')
   .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .option('-q, --quiet', '静默模式，仅输出最终结果')
   .option('--dry-run', '仅输出测试配置，不实际执行请求')
@@ -207,6 +209,21 @@ program
     
     // 获取报告标题
     const reportTitle = process.env.REPORT_TITLE || model;
+
+    // 解析附加请求体参数
+    let extraBody = null;
+    if (options.extraBody) {
+      try {
+        const { body, dropped } = sanitizeExtraBody(parseExtraBody(options.extraBody));
+        extraBody = body;
+        if (dropped.length > 0) {
+          console.warn(chalk.yellow(`⚠️ --extra-body 中的保留字段已忽略: ${dropped.join(', ')}`));
+        }
+      } catch (e) {
+        console.error(chalk.red(`❌ 错误: --extra-body ${e.message}`));
+        process.exit(1);
+      }
+    }
     
     // 创建输入生成器
     const generateInputText = createInputGenerator(sampleCount, sampleFiles);
@@ -230,6 +247,9 @@ program
       console.log(`  最大输出Token数: ${maxOutputTokens}`);
       console.log(`  请求超时: ${timeout / 1000}s`);
       console.log(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
+      if (extraBody) {
+        console.log(`  附加请求体: ${JSON.stringify(extraBody)}`);
+      }
       console.log(`  API URL: ${url}`);
       console.log('');
     }
@@ -254,6 +274,7 @@ program
         sampleCount,
         generateInputText,
         timeout,
+        extraBody,
         quiet
       });
       
