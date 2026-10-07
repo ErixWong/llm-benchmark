@@ -48,8 +48,13 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 
 | 版本 | 含义 |
 |------|------|
-| 1 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
+| 1.1 | 新增可选的 `metrics.cache` 缓存探针结果；既有指标字段的含义不变 |
+| 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
 | 无该字段 | 旧口径：`ttft` 只统计 content token。**与新数据不可直接对比** |
+
+版本使用 `[major].[minor]` 形式：`major` 仅在既有字段含义发生不兼容变更时递增；
+`minor` 仅用于纯新增、向后兼容的字段。由于版本号以 JSON Number 保存，`minor` 只能是
+`0`–`9` 的单个数字；例如 `1.10` 会被 JSON 数值解析为 `1.1`，不能用作独立版本。
 
 ## Token 计数来源
 
@@ -74,6 +79,63 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 ```bash
 node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 ```
+
+## 缓存命中
+
+压测中的“缓存”可能指三种不同机制，不能混为一谈：
+
+| 类型 | 作用 | 本工具能观测什么 |
+|------|------|------------------|
+| 前缀缓存 / KV 复用 | 推理服务复用相同 prompt 前缀对应的 KV blocks，减少重复 prefill 工作 | `--cache-probe` 对比 cold/warm 两组 TTFT；服务端若在 usage 中报告缓存 token，也汇总到 `server` |
+| API 级 prompt caching | API 服务按其缓存实现复用 prompt，并可能单独报告缓存 token 或计费量 | 只读取响应 usage 中的服务端缓存字段；具体语义由 API 提供方定义 |
+| 响应级缓存 | 对相同请求直接复用完整响应，而不是重新推理 | `responseCacheSuspected` 是诊断计数，不是命中证明；输出异常短、无 usage 等信号不能单独证明响应缓存 |
+
+开启 `--cache-probe` 后，报告的 `metrics.cache` 结构如下：
+
+| 字段 | 含义 |
+|------|------|
+| `cold` / `warm` | 两组成功请求的 TTFT 分布摘要：`n`、`median`、`mean`、`min`、`max`；以中位数作为主要比较值，同时报告样本数和范围 |
+| `ttftDeltaMs` | `cold.median - warm.median`；正数表示 warm 组中位 TTFT 较低 |
+| `ttftRatio` | `cold.median / warm.median`；warm 中位数为 0 或数据不足时为 `null` |
+| `insufficientSamples` | cold 或 warm 任一组的有效 TTFT 样本数少于 3 |
+| `server` | 服务端缓存 usage 汇总；可含 `cachedPromptTokens`、`promptTokens`、`tokenHitRate`、`requestsWithData` 与 `source: "api"`；无可用服务端数据时为 `null` |
+| `verdict` | `benefit`、`no-benefit` 或 `inconclusive`，按下方规则产生 |
+| `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索 |
+| `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数 |
+
+口径规则：
+
+1. **缓存命中率只依据服务端 usage**。服务端没有提供可用的 prompt/缓存 token 数据时，
+   命中率是 unknown（`server: null`），绝不使用客户端 tokenizer 或冷热延迟估算命中率。
+   服务端报告 prompt token usage 但不提供缓存字段时，缓存 token 按 0 汇总；这不是客户端估算。
+2. `ttftDeltaMs` 只是两组 TTFT **中位数之差**，不是 prefill 耗时。warm 组 TTFT 仍包含排队、
+   prefill（如未命中）和首个 decode step；两组还都包含网络往返。
+3. 主要比较值用中位数，并同时看 `n`、`min`、`max`。任一组有效样本少于 3 时标记
+   `insufficientSamples: true`，判定为不确定；不设置固定的毫秒差或倍数验收阈值。
+4. 命中率只在同一服务端数据源、同一 token 口径内计算（缓存 prompt token 总数 ÷ prompt token
+   总数）。沿用“不同来源不得相减”的规则，不把客户端估算值与服务端 usage 混算。
+5. `verdict` 规则：
+   - 样本不足时为 `inconclusive`。
+   - 有服务端缓存数据且命中率为 0 时为 `no-benefit`；命中率大于 0 且 warm 中位 TTFT
+     低于 cold 时为 `benefit`；否则为 `inconclusive`。
+   - 没有服务端缓存数据时，只用冷热 TTFT 行为作有限结论：warm 中位数更低为 `benefit`，
+     否则为 `no-benefit`。此时结论不代表服务端确认了缓存命中。
+
+测量前置条件与陷阱：
+
+- **前缀必须逐 token 一致**：字符相似、语义相同或仅有空白差异，都可能产生不同 token 序列，
+  造成假阴性。system prompt、模板和服务端预处理变化也可能改变实际 token 前缀。
+- **nonce 必须放在所有共享内容之前**。cold/warm 的 nonce 不同；若 nonce 放在共享素材后面，
+  cold 请求仍以前面共享内容开头，可能意外命中。
+- **前缀预热必须串行**：同一待测前缀的并发预热可能形成惊群，多个请求同时首次到达时都会 miss。
+  本工具的 prefix 预热按单元串行执行，并在计时请求之前完成。
+- **缓存按 block 粒度工作**：例如 vLLM 默认 block size 为 16 tokens，实际命中 token 数会按 block
+  向下取整；短前缀或 block 边界附近的差异可能看起来不像逐 token 精确匹配。
+- **并发会产生淘汰**：并发大于 1 时，cold 组的大前缀可能挤掉已预热的 warm 前缀。
+  因此命中率低于 100% 可能是被测服务缓存容量/调度的真实测量结果，不是工具错误。
+- **假阴性防护**：前缀自检（hash/唯一性以及 warm 是否以前缀原文开头）失败时必须报错中止，
+  不得继续给出缓存结论。`prefixHash` 是客户端构造前缀的摘要，不是服务端缓存命中的证明。
+- 探针预热会改变服务端缓存状态；只对获准的测试端点运行，不要对生产服务做未经授权的压力测试。
 
 ## 推理模型（GLM / Qwen / DeepSeek-R1 等）
 
@@ -122,6 +184,7 @@ node src/index.js --extra-body '{"chat_template_kwargs":{"enable_thinking":false
 | 按持续时间 / rampUp 的加压曲线（本工具按「并发 × 轮数」离散发请求） | AIPerf、guidellm、k6 |
 | RPS/QPS 与 P50/P90/P99 分位数 | 用 `raw` 里的 `requestTime` 自行计算，或用上述工具 |
 | 服务端资源指标（GPU 利用率、显存、KV cache 命中、排队深度） | vLLM `/metrics`、Prometheus + Grafana |
+| 多轮会话接续、真实会话回放与 agentic 流程（会话与 agent 能力不在本工具 scope） | 专用会话/agent 评测与回放工具 |
 | 浸泡 / 峰值 / 混沌类测试 | 专用平台；本工具单次运行以秒到分钟计 |
 
 ## 与其他工具的字段对照

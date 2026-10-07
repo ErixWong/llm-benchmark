@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- `--cache-probe` 冷/热缓存探针：串行预热前缀、交错测量 cold/warm，并在 `metrics.cache`
+  与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要
+- 新增 `src/cache-source.js`、`src/cache-probe.js`、`src/cache-plan.js` 三个缓存探针模块及单测
+- 新增 `--warmup-mode`、`--prefix-tokens`、`--cache-suffix`、`--cache-seed` 与 `--retry`
+  参数；`--retry 0` 可关闭请求重试
+- JSON 报告 `metricsVersion` 更新为 `1.1`，仅增加缓存探针字段，**非 BREAKING**：
+  既有字段含义未变；不启用 `--cache-probe` 时报告不增加缓存区块，原有结果内容保持不变
 - `ttfo`（Time to First Output Token）：首个**非 reasoning** token 的延迟，
   保留“用户看到第一个字”的视角；已进控制台摘要、Markdown 与 HTML 报告
 - `reasoningTokens` / `contentTokens` 拆分，以及 `tokenSource` / `reasoningTokenSource`
