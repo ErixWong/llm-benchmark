@@ -35,6 +35,8 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `-r, --rounds <n>` | `ROUNDS` | `5` | 采样轮数，**总请求数 = 并发 × 轮数** |
 | `-n, --sample-count <n>` | `SAMPLE_COUNT` | `0` | 每次请求确定性轮转选取的样本数，`0` = 内置简单 prompt |
 | `--sample-seed <n>` | `SAMPLE_SEED` | `42` | `-n > 0` 时决定样本轮转起点；相同素材集、种子和请求序号会选中相同文件 |
+| `--bank <name>` | `BANK` | 无 | 使用 `data/banks/<name>.json` 题库替代默认 prompt |
+| `--bank-items <ids>` | — | 无 | 逗号分隔的条目 ID，按给定顺序循环选取以复现结果；需同时指定 `--bank` |
 | `-m, --max-output <n>` | `MAX_OUTPUT_TOKENS` | `30000` | `max_tokens` |
 | `--concurrency-mode <mode>` | `CONCURRENCY_MODE` | `pipeline` | `pipeline`（完成一个补一个）/ `batch`（整批等） |
 | `-t, --timeout <sec>` | `DEFAULT_TIMEOUT`（毫秒） | `90` | 单次请求超时 |
@@ -69,7 +71,8 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `DEFAULT_CONCURRENCY` / `ROUNDS` / `MAX_OUTPUT_TOKENS` | 并发 / 轮数 / `max_tokens` |
 | `CONCURRENCY_MODE` | `pipeline` \| `batch` |
 | `DEFAULT_TIMEOUT` | 请求超时，**单位毫秒** |
-| `SAMPLE_COUNT` / `SAMPLE_SEED` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 确定性轮转种子 / 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
+| `SAMPLE_COUNT` / `SAMPLE_SEED` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 确定性轮转种子（也用于题库）/ 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
+| `BANK` | 题库名称，对应 `data/banks/<name>.json` |
 | `CACHE_PROBE` / `WARMUP_MODE` | 是否启用缓存探针 / 预热方式 |
 | `PREFIX_TOKENS` / `CACHE_SEED` / `RETRY` | 缓存前缀目标长度 / 素材起点 / 最大重试次数 |
 | `EXTRA_BODY` | 透传请求体参数（JSON 字符串） |
@@ -152,6 +155,24 @@ node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":
 
 仓库自带 22 个样本（`data/samples/{code,dialogue,literature,mixed,news,tech}/`），
 实测单个 **4.7k ～ 15.3k token**（中位约 7.5k）——文件名里的 `8k` 是标称值。
+
+## 素材来源与场景正交
+
+素材来源有三种，按场景选择：
+
+- `chunked-samples`：`--cache-probe` 使用的切块素材，只用于缓存探针；题库暂不支持缓存探针场景。
+- `--bank <name>`：从 `data/banks/<name>.json` 读取列表型题库，每个计时请求使用一个条目的 `prompt`；
+  `-n N`（N > 0）与题库互斥。题库条目的 `expected` 仅保存预期输出 token 数和文本，**绝不拼入 prompt**。
+- `-n N`：从 `data/` 下的文本文件组装大上下文；`-n 0` 且未指定题库时使用内置简单 prompt。
+
+题库按 `tags.outputTier` 分层（缺失时归入 `__default__`）。每层根据 `--sample-seed` 做确定性洗牌，
+随后各层轮流取条目；整库选完后从头开始。相同题库、seed 和请求序号选取相同条目，层内条目使用次数保持均匀。
+`--bank-items id1,id2` 会告警并覆盖自动轮转，按给定 ID 顺序循环分配；可用它定点复现某些条目。
+
+```bash
+node src/index.js --bank poems -c 1 -r 3 -n 0
+node src/index.js --bank poems --bank-items wujue-jingyesi,wujue-chunxiao -c 1 -r 3 -n 0
+```
 
 ## 常见问题
 

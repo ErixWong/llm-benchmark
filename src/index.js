@@ -15,6 +15,7 @@ import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
 import { selectSampleFiles } from './sample-select.js';
+import { loadBank, selectBankItems, selectBankItemsByIds } from './bank.js';
 import { buildMaterial, hashMaterialBank } from './cache-source.js';
 import {
   buildProbeUnits,
@@ -109,8 +110,12 @@ async function scanSampleFiles(dir, baseDir = dir) {
  * The returned function takes a zero-based request index; estimates and warm-up use 0.
  * @returns {(requestIndex?: number) => Promise<string>} 输入文本生成函数
  */
-function createInputGenerator(sampleCount, sampleFiles, sampleSeed) {
+function createInputGenerator(sampleCount, sampleFiles, sampleSeed, bankSelections = null) {
   return async (requestIndex = 0) => {
+    if (bankSelections) {
+      const item = bankSelections[requestIndex % bankSelections.length];
+      return item.prompt;
+    }
     if (sampleCount > 0 && sampleFiles.length > 0) {
       const selectedFiles = selectSampleFiles(sampleFiles, sampleCount, requestIndex, sampleSeed);
       
@@ -146,6 +151,8 @@ program
   .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .option('-q, --quiet', '静默模式，仅输出最终结果')
   .option('--sample-seed <number>', '确定性样本轮转种子', process.env.SAMPLE_SEED || '42')
+  .option('--bank <name>', '使用 data/banks/<name>.json 题库', process.env.BANK || '')
+  .option('--bank-items <ids>', '按逗号分隔的条目 ID 顺序循环选取（需同时指定 --bank）')
   .option('--cache-probe', '启用缓存命中探针', process.env.CACHE_PROBE === 'true')
   .option('--warmup-mode <mode>', '预热模式: auto | prefix | model | none', process.env.WARMUP_MODE || 'auto')
   .option('--prefix-tokens <number>', '每个单元素材的目标前缀Token数', process.env.PREFIX_TOKENS || '4096')
@@ -188,6 +195,46 @@ program
     const retry = safeParseInt(options.retry, 3, 'retry');
     const unitCount = concurrency * rounds;
     const samples = cacheProbeEnabled ? 2 * unitCount : unitCount;
+    const bankName = options.bank;
+    const hasBankItems = options.bankItems !== undefined;
+
+    if (bankName && sampleCount > 0) {
+      console.error(chalk.red('❌ 错误: --bank 与 -n N（N > 0）素材来源互斥'));
+      process.exit(1);
+    }
+    if (bankName && cacheProbeEnabled) {
+      console.error(chalk.red('❌ 错误: 题库暂不支持缓存探针场景'));
+      process.exit(1);
+    }
+    if (hasBankItems && !bankName) {
+      console.error(chalk.red('❌ 错误: --bank-items 需要同时指定 --bank'));
+      process.exit(1);
+    }
+
+    let bank = null;
+    let explicitBankItems = null;
+    if (bankName) {
+      try {
+        bank = await loadBank(process.cwd(), bankName);
+      } catch (error) {
+        console.error(chalk.red(`❌ ${error.message}`));
+        process.exit(1);
+      }
+    }
+    if (hasBankItems) {
+      const ids = options.bankItems.split(',').map(id => id.trim());
+      if (ids.some(id => id === '')) {
+        console.error(chalk.red('❌ 错误: --bank-items 中的条目 ID 不能为空'));
+        process.exit(1);
+      }
+      console.warn(chalk.yellow('⚠️ --bank-items 已指定，按给定 ID 顺序覆盖题库自动选择'));
+      try {
+        explicitBankItems = selectBankItemsByIds(bank, ids);
+      } catch (error) {
+        console.error(chalk.red(`❌ ${error.message}`));
+        process.exit(1);
+      }
+    }
 
     if (!['auto', 'prefix', 'model', 'none'].includes(warmupMode)) {
       console.error(chalk.red(`❌ 错误: 无效的 --warmup-mode "${warmupMode}"，可选 auto、prefix、model、none`));
@@ -275,7 +322,15 @@ program
         (_, requestIndex) => selectSampleFiles(sampleFiles, sampleCount, requestIndex, sampleSeed)
       )
       : [];
-    const generateInputText = createInputGenerator(sampleCount, sampleFiles, sampleSeed);
+    const bankSelections = bank
+      ? Array.from(
+        { length: Math.max(samples, 1) },
+        (_, requestIndex) => explicitBankItems
+          ? explicitBankItems[requestIndex % explicitBankItems.length]
+          : selectBankItems(bank, 1, requestIndex, sampleSeed)[0]
+      )
+      : null;
+    const generateInputText = createInputGenerator(sampleCount, sampleFiles, sampleSeed, bankSelections);
     
     let units = null;
     let requestPlan = null;
@@ -365,6 +420,24 @@ program
         for (const [requestIndex, selectedFiles] of sampleSelections.entries()) {
           console.log(`  请求 #${requestIndex + 1} 素材: ${selectedFiles.join(', ')}`);
         }
+      } else if (bank) {
+        const tierCounts = {};
+        for (const item of bank.items) {
+          const tier = typeof item.tags.outputTier === 'string' && item.tags.outputTier.trim()
+            ? item.tags.outputTier
+            : '__default__';
+          tierCounts[tier] = (tierCounts[tier] || 0) + 1;
+        }
+        console.log(`  题库名称/版本: ${bank.name} / ${bank.version}`);
+        console.log(`  题库 hash: ${bank.hash}`);
+        console.log(`  题库条目数: ${bank.items.length}`);
+        console.log(`  题库分层计数: ${Object.entries(tierCounts).map(([tier, count]) => `${tier}=${count}`).join(', ')}`);
+        if (explicitBankItems) {
+          console.log(`  定点条目 ID（循环）: ${explicitBankItems.map(item => item.id).join(', ')}`);
+        }
+        for (const [requestIndex, item] of bankSelections.slice(0, samples).entries()) {
+          console.log(`  请求 #${requestIndex + 1} 素材: ${item.id}`);
+        }
       } else {
         console.log(`  使用默认简单Prompt`);
       }
@@ -418,6 +491,15 @@ program
         sampleSeed,
         sampleFiles,
         sampleSelections: sampleSelections.map((files, requestIndex) => ({ requestIndex, files })),
+        ...(bank ? {
+          bank: {
+            name: bank.name,
+            version: bank.version,
+            hash: bank.hash,
+            itemCount: bank.items.length
+          },
+          bankItemIds: bankSelections.map(item => item.id)
+        } : {}),
         generateInputText,
         timeout,
         extraBody,

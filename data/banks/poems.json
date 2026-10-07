@@ -1,0 +1,398 @@
+{
+  "name": "poems",
+  "version": 1,
+  "description": "公有领域中国古典诗词（短篇、常见），用于输出长度已知的可比跑分",
+  "source": "公有领域（作者均逝世逾千年，无版权）",
+  "items": [
+    {
+      "id": "wujue-jingyesi",
+      "prompt": "请完整背诵《静夜思》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 34,
+        "text": "床前明月光，疑是地上霜。\n举头望明月，低头思故乡。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-chunxiao",
+      "prompt": "请完整背诵《春晓》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 37,
+        "text": "春眠不觉晓，处处闻啼鸟。\n夜来风雨声，花落知多少。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-dengguanquelou",
+      "prompt": "请完整背诵《登鹳雀楼》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 34,
+        "text": "白日依山尽，黄河入海流。\n欲穷千里目，更上一层楼。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-xiangsi",
+      "prompt": "请完整背诵《相思》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 33,
+        "text": "红豆生南国，春来发几枝。\n愿君多采撷，此物最相思。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-luzhai",
+      "prompt": "请完整背诵《鹿柴》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 32,
+        "text": "空山不见人，但闻人语响。\n返景入深林，复照青苔上。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-jiangxue",
+      "prompt": "请完整背诵《江雪》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 44,
+        "text": "千山鸟飞绝，万径人踪灭。\n孤舟蓑笠翁，独钓寒江雪。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-minnong",
+      "prompt": "请完整背诵《悯农（其二）》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 38,
+        "text": "锄禾日当午，汗滴禾下土。\n谁知盘中餐，粒粒皆辛苦。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-xunyinzhe",
+      "prompt": "请完整背诵《寻隐者不遇》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 31,
+        "text": "松下问童子，言师采药去。\n只在此山中，云深不知处。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-yonge",
+      "prompt": "请完整背诵《咏鹅》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 40,
+        "text": "鹅，鹅，鹅，曲项向天歌。\n白毛浮绿水，红掌拨清波。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 18,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-chishang",
+      "prompt": "请完整背诵《池上》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 38,
+        "text": "小娃撑小艇，偷采白莲回。\n不解藏踪迹，浮萍一道开。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-duzuojingtingshan",
+      "prompt": "请完整背诵《独坐敬亭山》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 37,
+        "text": "众鸟高飞尽，孤云独去闲。\n相看两不厌，只有敬亭山。"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "wujue-wenliushijiu",
+      "prompt": "请完整背诵《问刘十九》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 41,
+        "text": "绿蚁新醅酒，红泥小火炉。\n晚来天欲雪，能饮一杯无？"
+      },
+      "tags": {
+        "genre": "五言绝句",
+        "chars": 20,
+        "outputTier": "五言绝句"
+      }
+    },
+    {
+      "id": "qijue-wanglushanpubu",
+      "prompt": "请完整背诵《望庐山瀑布》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 53,
+        "text": "日照香炉生紫烟，遥看瀑布挂前川。\n飞流直下三千尺，疑是银河落九天。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-zaofabaidicheng",
+      "prompt": "请完整背诵《早发白帝城》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 47,
+        "text": "朝辞白帝彩云间，千里江陵一日还。\n两岸猿声啼不住，轻舟已过万重山。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-zengwanglun",
+      "prompt": "请完整背诵《赠汪伦》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 52,
+        "text": "李白乘舟将欲行，忽闻岸上踏歌声。\n桃花潭水深千尺，不及汪伦送我情。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-huanghelousongmeng",
+      "prompt": "请完整背诵《黄鹤楼送孟浩然之广陵》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 49,
+        "text": "故人西辞黄鹤楼，烟花三月下扬州。\n孤帆远影碧空尽，唯见长江天际流。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-huixiangoushu",
+      "prompt": "请完整背诵《回乡偶书》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 42,
+        "text": "少小离家老大回，乡音无改鬓毛衰。\n儿童相见不相识，笑问客从何处来。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-yongliu",
+      "prompt": "请完整背诵《咏柳》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 51,
+        "text": "碧玉妆成一树高，万条垂下绿丝绦。\n不知细叶谁裁出，二月春风似剪刀。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-liangzhouci",
+      "prompt": "请完整背诵《凉州词》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 48,
+        "text": "黄河远上白云间，一片孤城万仞山。\n羌笛何须怨杨柳，春风不度玉门关。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-fengqiaoyebo",
+      "prompt": "请完整背诵《枫桥夜泊》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 48,
+        "text": "月落乌啼霜满天，江枫渔火对愁眠。\n姑苏城外寒山寺，夜半钟声到客船。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-shanxing",
+      "prompt": "请完整背诵《山行》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 47,
+        "text": "远上寒山石径斜，白云生处有人家。\n停车坐爱枫林晚，霜叶红于二月花。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-qingming",
+      "prompt": "请完整背诵《清明》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 47,
+        "text": "清明时节雨纷纷，路上行人欲断魂。\n借问酒家何处有，牧童遥指杏花村。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-yuanri",
+      "prompt": "请完整背诵《元日》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 45,
+        "text": "爆竹声中一岁除，春风送暖入屠苏。\n千门万户曈曈日，总把新桃换旧符。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "qijue-tixilinbi",
+      "prompt": "请完整背诵《题西林壁》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 44,
+        "text": "横看成岭侧成峰，远近高低各不同。\n不识庐山真面目，只缘身在此山中。"
+      },
+      "tags": {
+        "genre": "七言绝句",
+        "chars": 28,
+        "outputTier": "七言绝句"
+      }
+    },
+    {
+      "id": "wulv-chunwang",
+      "prompt": "请完整背诵《春望》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 73,
+        "text": "国破山河在，城春草木深。\n感时花溅泪，恨别鸟惊心。\n烽火连三月，家书抵万金。\n白头搔更短，浑欲不胜簪。"
+      },
+      "tags": {
+        "genre": "五言律诗",
+        "chars": 40,
+        "outputTier": "五言律诗"
+      }
+    },
+    {
+      "id": "wulv-songdushaofu",
+      "prompt": "请完整背诵《送杜少府之任蜀州》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 68,
+        "text": "城阙辅三秦，风烟望五津。\n与君离别意，同是宦游人。\n海内存知己，天涯若比邻。\n无为在歧路，儿女共沾巾。"
+      },
+      "tags": {
+        "genre": "五言律诗",
+        "chars": 40,
+        "outputTier": "五言律诗"
+      }
+    },
+    {
+      "id": "wulv-cibeigushanxia",
+      "prompt": "请完整背诵《次北固山下》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 67,
+        "text": "客路青山外，行舟绿水前。\n潮平两岸阔，风正一帆悬。\n海日生残夜，江春入旧年。\n乡书何处达，归雁洛阳边。"
+      },
+      "tags": {
+        "genre": "五言律诗",
+        "chars": 40,
+        "outputTier": "五言律诗"
+      }
+    },
+    {
+      "id": "xiaoling-rumengling-xiting",
+      "prompt": "请完整背诵《如梦令·常记溪亭日暮》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 65,
+        "text": "常记溪亭日暮，沉醉不知归路。\n兴尽晚回舟，误入藕花深处。\n争渡，争渡，惊起一滩鸥鹭。"
+      },
+      "tags": {
+        "genre": "词·小令",
+        "chars": 33,
+        "outputTier": "词·小令"
+      }
+    },
+    {
+      "id": "xiaoling-yijiangnan",
+      "prompt": "请完整背诵《忆江南·江南好》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 44,
+        "text": "江南好，风景旧曾谙。\n日出江花红胜火，春来江水绿如蓝。\n能不忆江南？"
+      },
+      "tags": {
+        "genre": "词·小令",
+        "chars": 27,
+        "outputTier": "词·小令"
+      }
+    },
+    {
+      "id": "xiaoling-xiangjianhuan",
+      "prompt": "请完整背诵《相见欢·无言独上西楼》全文，直接输出诗文，不要任何解释或评论。",
+      "expected": {
+        "contentTokens": 62,
+        "text": "无言独上西楼，月如钩。\n寂寞梧桐深院锁清秋。\n剪不断，理还乱，是离愁。\n别是一般滋味在心头。"
+      },
+      "tags": {
+        "genre": "词·小令",
+        "chars": 36,
+        "outputTier": "词·小令"
+      }
+    }
+  ]
+}
