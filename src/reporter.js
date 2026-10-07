@@ -6,6 +6,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
+import { shouldWarnAboutTps, shouldCollapseTpsStatistics } from './cache-stats.js';
 
 /**
  * HTML转义函数，防止XSS攻击
@@ -83,19 +84,93 @@ function getCachePrefixSummary(config) {
   return `唯一性 ${unique}；预热前缀匹配 ${validation?.verified ?? 0}/${unitCount}`;
 }
 
-function getCacheDiagnosticWarnings(cache) {
+function getDiagnostics(metrics) {
+  if (metrics.diagnostics) return metrics.diagnostics;
+  return {
+    responseCacheSuspected: metrics.cache?.responseCacheSuspected ?? 0,
+    truncatedRequests: metrics.cache?.truncatedRequests ?? 0
+  };
+}
+
+function getDiagnosticWarnings(metrics) {
+  const diagnostics = getDiagnostics(metrics);
   const warnings = [];
-  if (cache.responseCacheSuspected > 0) {
+  if (diagnostics.responseCacheSuspected > 0) {
     warnings.push(
-      `⚠️ 疑似响应级缓存 ${cache.responseCacheSuspected} 条：TPS/解码类指标可能无效`
+      `⚠️ 疑似响应级缓存 ${diagnostics.responseCacheSuspected} 条：TPS/解码类指标可能无效`
     );
   }
-  if (cache.truncatedRequests > 0) {
+  if (diagnostics.truncatedRequests > 0) {
     warnings.push(
-      `⚠️ ${cache.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
+      `⚠️ ${diagnostics.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
     );
   }
   return warnings;
+}
+
+function getTpsSampleCount(tokenSpeed) {
+  return Array.isArray(tokenSpeed.metrics.tps.values)
+    ? tokenSpeed.metrics.tps.values.length
+    : tokenSpeed.config.samples;
+}
+
+function shouldShowTpsWarning(tokenSpeed) {
+  return shouldWarnAboutTps({
+    outputTokensMedian: tokenSpeed.metrics.outputTokens.median,
+    truncatedRequests: getDiagnostics(tokenSpeed.metrics).truncatedRequests,
+    totalRequests: tokenSpeed.config.samples
+  });
+}
+
+function formatTpsStatistics(stats) {
+  const formattedValues = [stats.mean, stats.median, stats.min, stats.max]
+    .map((value) => value.toFixed(2));
+  if (new Set(formattedValues).size === 1) {
+    return `${formattedValues[0]} tokens/s（平均/中位数/最小/最大相同）`;
+  }
+  return `平均 ${formattedValues[0]} / 中位数 ${formattedValues[1]} / `
+    + `最小 ${formattedValues[2]} / 最大 ${formattedValues[3]} tokens/s`;
+}
+
+function formatUtc8Timestamp(date) {
+  const utc8Date = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  return `${utc8Date.toISOString().slice(0, 19).replace('T', ' ')} +08:00`;
+}
+
+function escapeMarkdownTableCell(value) {
+  return inlineMarkdown(value).replace(/\|/g, '\\|');
+}
+
+function sanitizeReportUrl(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    for (const key of url.searchParams.keys()) {
+      if (/api[-_]?key|key|token|secret|password|authorization/i.test(key)) {
+        url.searchParams.set(key, '[REDACTED]');
+      }
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function redactSensitiveFields(value) {
+  if (Array.isArray(value)) {
+    return value.map(redactSensitiveFields);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, nestedValue]) => [
+    key,
+    /api[-_]?key|authorization|(?:access|refresh|auth)[-_]?token|secret|password/i.test(key)
+      ? '[REDACTED]'
+      : redactSensitiveFields(nestedValue)
+  ]));
 }
 
 function appendCacheMarkdown(lines, cache, config) {
@@ -103,7 +178,6 @@ function appendCacheMarkdown(lines, cache, config) {
   const warm = cache.warm || {};
   const server = cache.server;
   const sampleCount = config?.samples ?? '-';
-  const diagnosticWarnings = getCacheDiagnosticWarnings(cache);
 
   lines.push('### 缓存命中');
   lines.push('');
@@ -129,12 +203,6 @@ function appendCacheMarkdown(lines, cache, config) {
   }
   if (cache.insufficientSamples) {
     lines.push('> 样本不足，不做结论。');
-    lines.push('');
-  }
-  for (const warning of diagnosticWarnings) {
-    lines.push(warning);
-  }
-  if (diagnosticWarnings.length > 0) {
     lines.push('');
   }
 }
@@ -167,8 +235,7 @@ function generateCacheHtml(cache, config) {
     ...(server === null
       ? ['服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。']
       : []),
-    ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : []),
-    ...getCacheDiagnosticWarnings(cache)
+    ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : [])
   ];
 
   return `
@@ -201,8 +268,9 @@ function jsonForScript(value) {
  * 指标口径版本：major 表示既有字段含义发生不兼容变更；minor 表示纯新增字段。
  * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
  * v1.1: 新增可选的 metrics.cache 缓存探针结果（含配对判定规则；该功能与其判定规则在同一未发布版本内定型）
+ * v1.2: 新增通用 metrics.diagnostics
  */
-const METRICS_VERSION = 1.1;
+const METRICS_VERSION = 1.2;
 
 /**
  * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）
@@ -231,6 +299,18 @@ function stripOutputText(results) {
   return stripped;
 }
 
+function redactReportSecrets(results) {
+  const sanitized = { ...results };
+  if (sanitized.tokenSpeed?.config) {
+    sanitized.tokenSpeed = { ...sanitized.tokenSpeed };
+    sanitized.tokenSpeed.config = redactSensitiveFields(sanitized.tokenSpeed.config);
+    if (typeof sanitized.tokenSpeed.config.url === 'string') {
+      sanitized.tokenSpeed.config.url = sanitizeReportUrl(sanitized.tokenSpeed.config.url);
+    }
+  }
+  return sanitized;
+}
+
 /**
  * 生成测试报告
  * @param {Object} results - 测试结果
@@ -242,7 +322,8 @@ export async function generateReport(results, outputDir = './results') {
   await fs.mkdir(outputDir, { recursive: true });
 
   // 使用本地时区（UTC+8）生成时间戳
-  const now = new Date();
+  const reportTime = new Date();
+  const now = reportTime;
   const pad = (n) => n.toString().padStart(2, '0');
   const localTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   const baseName = `benchmark-${localTimestamp}`;
@@ -251,10 +332,10 @@ export async function generateReport(results, outputDir = './results') {
   const jsonPath = await generateJsonReport(results, outputDir, baseName);
 
   // 生成Markdown报告
-  const mdPath = await generateMarkdownReport(results, outputDir, baseName);
+  const mdPath = await generateMarkdownReport(results, outputDir, baseName, reportTime);
 
   // 生成HTML报告
-  const htmlPath = await generateHtmlReport(results, outputDir, baseName);
+  const htmlPath = await generateHtmlReport(results, outputDir, baseName, reportTime);
 
   console.log(chalk.cyan('\n📁 报告已生成:'));
   console.log(`  JSON: ${jsonPath}`);
@@ -273,7 +354,9 @@ export async function generateReport(results, outputDir = './results') {
  */
 async function generateJsonReport(results, outputDir, baseName) {
   const filePath = path.join(outputDir, `${baseName}.json`);
-  const payload = shouldIncludeOutputText() ? results : stripOutputText(results);
+  const payload = redactReportSecrets(
+    shouldIncludeOutputText() ? results : stripOutputText(results)
+  );
   await fs.writeFile(filePath, JSON.stringify({ metricsVersion: METRICS_VERSION, ...payload }, null, 2));
   return filePath;
 }
@@ -285,41 +368,67 @@ async function generateJsonReport(results, outputDir, baseName) {
  * @param {string} baseName - 基础文件名
  * @returns {Promise<string>} 文件路径
  */
-async function generateMarkdownReport(results, outputDir, baseName) {
+async function generateMarkdownReport(results, outputDir, baseName, reportTime) {
   const lines = [];
 
   lines.push('# LLM API 性能测试报告');
   lines.push('');
-  lines.push(`**测试时间**: ${new Date().toLocaleString('zh-CN')}`);
+  lines.push(`**测试时间**: ${formatUtc8Timestamp(reportTime)}`);
   lines.push('');
 
   // Token速度测试结果
   if (results.tokenSpeed && results.tokenSpeed.success) {
+    const config = results.tokenSpeed.config;
+    const tps = results.tokenSpeed.metrics.tps;
+    const tpsSampleCount = getTpsSampleCount(results.tokenSpeed);
     lines.push('## ⚡ Token生成速度测试');
     lines.push('');
     lines.push('### 测试配置');
     lines.push('');
     lines.push('| 参数 | 值 |');
     lines.push('|------|-----|');
-    lines.push(`| 模型 | ${results.tokenSpeed.config.model || 'N/A'} |`);
-    if (results.tokenSpeed.config.sampleCount > 0) {
-      lines.push(`| Sample数量 | ${results.tokenSpeed.config.sampleCount} 个 (每个约 8k tokens) |`);
+    lines.push(`| API URL | ${escapeMarkdownTableCell(sanitizeReportUrl(config.url) || 'N/A')} |`);
+    lines.push(`| 模型 | ${escapeMarkdownTableCell(config.model || 'N/A')} |`);
+    lines.push(`| 请求超时 | ${config.timeout == null ? 'N/A' : `${config.timeout} ms`} |`);
+    lines.push(`| Sample数量（-n） | ${config.sampleCount ?? 0} |`);
+    if (config.sampleCount > 0) {
+      lines.push(`| Sample说明 | 每次请求随机抽取 ${config.sampleCount} 个样本 |`);
     }
-    lines.push(`| 最大输出Token数 | ${results.tokenSpeed.config.maxOutputTokens} |`);
-    lines.push(`| 并发数 | ${results.tokenSpeed.config.concurrency} |`);
-    lines.push(`| 并发模式 | ${results.tokenSpeed.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'} |`);
-    lines.push(`| 采样次数 | ${results.tokenSpeed.config.samples} |`);
+    lines.push(`| --extra-body | ${config.extraBody && Object.keys(config.extraBody).length > 0
+      ? escapeMarkdownTableCell(JSON.stringify(redactSensitiveFields(config.extraBody)))
+      : '无'} |`);
+    lines.push(`| 最大输出Token数 | ${config.maxOutputTokens} |`);
+    lines.push(`| 并发数 | ${config.concurrency} |`);
+    lines.push(`| 并发模式 | ${config.concurrencyMode === 'pipeline' ? '流水线' : '批次'} |`);
+    lines.push(`| 采样次数 | ${config.samples} |`);
+    if (config.cacheProbe) {
+      lines.push(`| 缓存探针单元数 | ${config.units?.length ?? 0} |`);
+      lines.push(`| 目标前缀Token数 | ${config.prefixTokens ?? 'N/A'} |`);
+      lines.push(`| warmupMode | ${escapeMarkdownTableCell(config.warmupMode ?? 'N/A')} |`);
+      lines.push(`| runSalt | ${escapeMarkdownTableCell(config.runSalt ?? 'N/A')} |`);
+      lines.push(`| 素材库（config.bank） | ${config.bank
+        ? escapeMarkdownTableCell(JSON.stringify(config.bank))
+        : 'N/A'} |`);
+    }
     lines.push('');
 
     lines.push('### Token生成速度 (TPS)');
     lines.push('');
     lines.push('| 指标 | 值 |');
     lines.push('|------|-----|');
-    lines.push(`| 平均 | ${results.tokenSpeed.metrics.tps.mean.toFixed(2)} tokens/s |`);
-    lines.push(`| 中位数 | ${results.tokenSpeed.metrics.tps.median.toFixed(2)} tokens/s |`);
-    lines.push(`| 最小 | ${results.tokenSpeed.metrics.tps.min.toFixed(2)} tokens/s |`);
-    lines.push(`| 最大 | ${results.tokenSpeed.metrics.tps.max.toFixed(2)} tokens/s |`);
+    if (shouldCollapseTpsStatistics(tpsSampleCount)) {
+      lines.push(`| TPS统计（样本不足，n=${tpsSampleCount}） | ${formatTpsStatistics(tps)} |`);
+    } else {
+      lines.push(`| 平均 | ${tps.mean.toFixed(2)} tokens/s |`);
+      lines.push(`| 中位数 | ${tps.median.toFixed(2)} tokens/s |`);
+      lines.push(`| 最小 | ${tps.min.toFixed(2)} tokens/s |`);
+      lines.push(`| 最大 | ${tps.max.toFixed(2)} tokens/s |`);
+    }
     lines.push(`| 整体吞吐（墙钟） | ${results.tokenSpeed.metrics.throughputTps ? results.tokenSpeed.metrics.throughputTps.toFixed(2) : '-'} tokens/s |`);
+    if (shouldShowTpsWarning(results.tokenSpeed)) {
+      lines.push('');
+      lines.push('> ⚠️ 输出过短，TPS 不具意义');
+    }
     lines.push('');
 
     lines.push('### 首Token延迟');
@@ -333,6 +442,8 @@ async function generateMarkdownReport(results, outputDir, baseName) {
     if (results.tokenSpeed.metrics.ttfo?.values?.length > 0) {
       lines.push(`| TTFO 平均（首个可见内容） | ${results.tokenSpeed.metrics.ttfo.mean.toFixed(0)} ms |`);
     }
+    lines.push('');
+    lines.push('> TTFT 到首个生成 token（含 reasoning）；TTFO 到首个可见内容。');
     lines.push('');
 
     lines.push('### 输出Token统计');
@@ -352,6 +463,14 @@ async function generateMarkdownReport(results, outputDir, baseName) {
       if (ts.api === 0) {
         lines.push('> 服务端未返回 usage，绝对 token 数为客户端 tokenizer 估算值。');
       }
+      lines.push('');
+    }
+
+    const diagnosticWarnings = getDiagnosticWarnings(results.tokenSpeed.metrics);
+    for (const warning of diagnosticWarnings) {
+      lines.push(warning);
+    }
+    if (diagnosticWarnings.length > 0) {
       lines.push('');
     }
 
@@ -386,7 +505,7 @@ async function generateMarkdownReport(results, outputDir, baseName) {
   }
 
   lines.push('---');
-  lines.push(`*报告生成时间: ${new Date().toISOString()}*`);
+  lines.push(`*报告生成时间: ${formatUtc8Timestamp(reportTime)}*`);
 
   const filePath = path.join(outputDir, `${baseName}.md`);
   await fs.writeFile(filePath, lines.join('\n'));
@@ -400,7 +519,7 @@ async function generateMarkdownReport(results, outputDir, baseName) {
  * @param {string} baseName - 基础文件名
  * @returns {Promise<string>} 文件路径
  */
-async function generateHtmlReport(results, outputDir, baseName) {
+async function generateHtmlReport(results, outputDir, baseName, reportTime) {
   // 准备图表数据
   const chartData = prepareChartData(results);
   
@@ -546,6 +665,8 @@ async function generateHtmlReport(results, outputDir, baseName) {
     .panel-1 { animation-delay: 0.1s; }
     .panel-2 { animation-delay: 0.2s; }
     .panel-3 { animation-delay: 0.3s; }
+    .diagnostic-warning { color: #9c4221; background: #fffaf0; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+    .sample-note { color: #718096; font-size: 12px; margin: 0 0 10px; }
   </style>
 </head>
 <body>
@@ -554,7 +675,7 @@ async function generateHtmlReport(results, outputDir, baseName) {
     ${results.reportTitle ? `
     <div class="report-title">${escapeHtml(results.reportTitle)}</div>
     ` : ''}
-    <p class="timestamp">测试时间: ${new Date().toLocaleString('zh-CN')}</p>
+    <p class="timestamp">测试时间: ${formatUtc8Timestamp(reportTime)}</p>
     
     ${generateTokenSpeedHtml(results, chartData)}
   </div>
@@ -1009,10 +1130,14 @@ function generateTokenSpeedHtml(results, chartData) {
       <div class="metric-explanation" style="background: #f0f4f8; color: #4a5568; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; border-left: 3px solid #4299e1;">
         <strong style="color: #2d3748;">📖 指标说明：</strong>
         <span style="margin-left: 8px;">
-          <b>TTFT</b> = 首Token延迟 (Time To First Token) |
+          <b>TTFT</b> = 到首个生成 token（含 reasoning） |
+          <b>TTFO</b> = 到首个可见内容 |
           <b>TPS</b> = 每秒生成Token数 (Tokens Per Second)
         </span>
       </div>
+      ${getDiagnosticWarnings(r.metrics).map((warning) => (
+    `<p class="diagnostic-warning">${escapeHtml(warning)}</p>`
+  )).join('')}
       
       <!-- Panel 1: 参数及指标卡片 -->
       <div class="panel panel-1" style="margin-bottom: 25px;">
@@ -1024,7 +1149,7 @@ function generateTokenSpeedHtml(results, chartData) {
           <div class="config-table" style="background: #fff; border-radius: 8px; padding: 0; border: 1px solid #e2e8f0;">
             <table style="background: white; border-radius: 6px; overflow: hidden; font-size: 13px;">
               <tr><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">参数</th><th style="background: #f7fafc; color: #4a5568; font-weight: 500; border-bottom: 1px solid #e2e8f0;">值</th></tr>
-              <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${escapeHtml(r.config.url) || 'N/A'}</td></tr>
+              <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${escapeHtml(sanitizeReportUrl(r.config.url)) || 'N/A'}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${escapeHtml(r.config.model) || 'N/A'}</span></td></tr>
               ${r.config.sampleCount > 0 ? `<tr><td style="border-bottom: 1px solid #edf2f7;">Sample数量</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
               <tr><td style="border-bottom: 1px solid #edf2f7;">最大输出Token数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.maxOutputTokens}</td></tr>
@@ -1037,6 +1162,7 @@ function generateTokenSpeedHtml(results, chartData) {
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #3182ce;">${r.metrics.tps.mean.toFixed(1)}</div>
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均 TPS</div>
+                ${shouldShowTpsWarning(r) ? '<p class="diagnostic-warning">⚠️ 输出过短，TPS 不具意义</p>' : ''}
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.throughputTps ? r.metrics.throughputTps.toFixed(1) : '-'}</div>
@@ -1107,19 +1233,20 @@ function generateTokenSpeedHtml(results, chartData) {
         </h3>
         <div class="charts-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #3182ce; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">📊 TPS 分布</h4>
+            <h3 style="color: #3182ce; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">📊 TPS 分布</h3>
+            ${shouldCollapseTpsStatistics(getTpsSampleCount(r)) ? `<p class="sample-note">TPS统计（样本不足，n=${getTpsSampleCount(r)}）：${escapeHtml(formatTpsStatistics(r.metrics.tps))}</p>` : ''}
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="tpsChart"></canvas>
             </div>
           </div>
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #ed8936; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">⏱️ TTFT 分布</h4>
+            <h3 style="color: #ed8936; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">⏱️ TTFT 分布</h3>
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="ttftChart"></canvas>
             </div>
           </div>
           <div class="chart-card" style="background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #e2e8f0; transition: all 0.2s;">
-            <h4 style="color: #805ad5; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">🔄 输入/输出Token分布</h4>
+            <h3 style="color: #805ad5; font-size: 14px; margin-bottom: 12px; text-align: center; font-weight: 500;">🔄 输入/输出Token分布</h3>
             <div class="chart-container" style="position: relative; height: 220px;">
               <canvas id="outputChart"></canvas>
             </div>
@@ -1129,63 +1256,6 @@ function generateTokenSpeedHtml(results, chartData) {
       ` : ''}${r.metrics.cache ? generateCacheHtml(r.metrics.cache, r.config) : ''}
     </div>
   `;
-}
-
-/**
- * 生成性能评估
- * @param {Object} results - 测试结果
- * @returns {string} 评估文本
- */
-function generatePerformanceAssessment(results) {
-  const assessments = [];
-
-  if (results.tokenSpeed && results.tokenSpeed.success) {
-    const r = results.tokenSpeed;
-
-    // TPS评估
-    if (r.metrics.tps.mean >= 50) {
-      assessments.push('✅ Token生成速度快，适合实时交互场景。');
-    } else if (r.metrics.tps.mean >= 20) {
-      assessments.push('✓ Token生成速度适中，能够满足一般需求。');
-    } else {
-      assessments.push('⚠️ Token生成速度较慢，可能影响用户体验。');
-    }
-
-    // TTFT评估
-    if (r.metrics.ttft.mean < 300) {
-      assessments.push('✅ 首Token延迟低，响应迅速。');
-    } else if (r.metrics.ttft.mean < 1000) {
-      assessments.push('✓ 首Token延迟可接受。');
-    } else {
-      assessments.push('⚠️ 首Token延迟较高，用户可能感觉到明显等待。');
-    }
-  }
-
-  return assessments.join('\n\n');
-}
-
-/**
- * 生成结论
- * @param {Object} results - 测试结果
- * @returns {string} 结论文本
- */
-function generateConclusion(results) {
-  const conclusions = [];
-
-  if (results.tokenSpeed && results.tokenSpeed.success) {
-    const r = results.tokenSpeed;
-    const tps = r.metrics.tps.mean;
-    const ttft = r.metrics.ttft.mean;
-    const concurrency = r.config.concurrency;
-
-    if (tps >= 30 && ttft < 1000) {
-      conclusions.push(`Token速度测试（${concurrency}并发）: 性能良好，平均 ${tps.toFixed(1)} TPS，TTFT ${ttft.toFixed(0)}ms。`);
-    } else {
-      conclusions.push(`Token速度测试（${concurrency}并发）: 性能有待提升，平均 ${tps.toFixed(1)} TPS，TTFT ${ttft.toFixed(0)}ms。`);
-    }
-  }
-
-  return conclusions.join(' ') || '测试已完成，请查看详细结果。';
 }
 
 export default {

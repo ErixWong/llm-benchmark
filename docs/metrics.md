@@ -48,6 +48,7 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 
 | 版本 | 含义 |
 |------|------|
+| 1.2 | 新增始终存在的 `metrics.diagnostics`，汇总截断与疑似响应级缓存诊断；探针结果继续保留 `metrics.cache` 中的旧诊断字段 |
 | 1.1 | 新增可选的 `metrics.cache` 缓存探针结果（含配对判定规则、配对统计与 `reason`） |
 | 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
 | 无该字段 | 旧口径：`ttft` 只统计 content token。**与新数据不可直接对比** |
@@ -91,6 +92,29 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 | 前缀缓存 / KV 复用 | 推理服务复用相同 prompt 前缀对应的 KV blocks，减少重复 prefill 工作 | `--cache-probe` 对比 cold/warm 两组 TTFT；服务端若在 usage 中报告缓存 token，也汇总到 `server` |
 | API 级 prompt caching | API 服务按其缓存实现复用 prompt，并可能单独报告缓存 token 或计费量 | 只读取响应 usage 中的服务端缓存字段；具体语义由 API 提供方定义 |
 | 响应级缓存 | 对相同请求直接复用完整响应，而不是重新推理 | `responseCacheSuspected` 是诊断计数，不是命中证明；输出异常短、无 usage 等信号不能单独证明响应缓存 |
+
+### 通用诊断
+
+JSON 报告在所有运行模式中都提供 `metrics.diagnostics`：
+
+| 字段 | 含义 |
+|------|------|
+| `truncatedRequests` | 成功请求中，`outputTokens === maxOutputTokens` 的计数；只说明触及配置上限，不证明模型本来自然输出更长 |
+| `responseCacheSuspected` | 成功请求中，`contentTokens > 0` 且满足 `outputTokens === 0`、`generationTime === 0`，或本条 `hasUsage === false` 且同次运行至少一条成功请求 `hasUsage === true` 的计数；只是诊断线索，不是缓存命中证明 |
+
+启用 `--cache-probe` 时，`metrics.cache.truncatedRequests` 与
+`metrics.cache.responseCacheSuspected` 为兼容保留字段，数值分别与通用口径
+`metrics.diagnostics.truncatedRequests` 和 `metrics.diagnostics.responseCacheSuspected`
+一致。控制台、Markdown 与 HTML 仅在对应诊断计数大于 0 时显示警告。
+
+当输出 token 中位数小于 5，或全部计时请求都触及 `max_tokens` 上限时，报告与控制台会提示
+“输出过短，TPS 不具意义”。TPS 是首个到最后一个生成 token 的窗口均值；输出过短会让该窗口
+接近计时分辨率，不能据此比较生成速度。TPS 样本数少于 3 时，汇总展示折叠为一行并标注
+“样本不足”，不重复展示缺乏统计意义的 min / median / max。
+
+`tokenSpeed.config` 记录请求超时（`timeout`，毫秒）与经过保留键过滤的 `extraBody`，
+便于复现测试配置；API key 不属于报告配置字段，也不会写入报告。Markdown 报告另列
+API URL、`-n` 样本数，以及探针单元数、目标前缀长度、`warmupMode`、`runSalt` 与素材库指纹。
 
 开启 `--cache-probe` 后，报告的 `metrics.cache` 结构如下：
 

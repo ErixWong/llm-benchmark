@@ -46,6 +46,61 @@ export function isTruncated({ outputTokens, maxOutputTokens } = {}) {
 }
 
 /**
+ * 汇总适用于所有测试模式的逐请求诊断。
+ *
+ * @param {Array<Object>} requests - 逐请求结果
+ * @returns {{responseCacheSuspected:number, truncatedRequests:number}}
+ */
+export function summarizeDiagnostics(requests = []) {
+  const sourceRequests = Array.isArray(requests) ? requests : [];
+  const successfulRequests = sourceRequests.filter((request) => request?.success !== false);
+  const usageSeenInRun = successfulRequests.some((request) => request?.hasUsage === true);
+  const responseCacheSuspected = successfulRequests.filter((request) => (
+    typeof request?.contentTokens === 'number'
+    && request.contentTokens > 0
+    && (
+      request.outputTokens === 0
+      || request.generationTime === 0
+      || (request.hasUsage === false && usageSeenInRun)
+    )
+  )).length;
+  const truncatedRequests = successfulRequests.filter((request) => isTruncated(request)).length;
+
+  return { responseCacheSuspected, truncatedRequests };
+}
+
+/**
+ * 判断 TPS 是否因输出窗口过短或所有请求均触及输出上限而不具参考意义。
+ *
+ * @param {{outputTokensMedian:number, truncatedRequests:number, totalRequests:number}} params
+ * @returns {boolean}
+ */
+export function shouldWarnAboutTps({
+  outputTokensMedian,
+  truncatedRequests = 0,
+  totalRequests = 0
+} = {}) {
+  return (typeof outputTokensMedian === 'number'
+      && Number.isFinite(outputTokensMedian)
+      && outputTokensMedian < 5)
+    || (totalRequests > 0
+      && truncatedRequests > 0
+      && truncatedRequests === totalRequests);
+}
+
+/**
+ * 判断 TPS 统计样本是否不足以分别展示汇总行。
+ *
+ * @param {number} sampleCount
+ * @returns {boolean}
+ */
+export function shouldCollapseTpsStatistics(sampleCount) {
+  return typeof sampleCount === 'number'
+    && Number.isFinite(sampleCount)
+    && sampleCount < MIN_SAMPLES;
+}
+
+/**
  * 汇总缓存请求的冷/热 TTFT、服务端缓存命中率及诊断信息。
  *
  * @param {Array<Object>} requests - 逐请求结果
@@ -179,17 +234,8 @@ export function summarizeCache(requests = []) {
     reason = 'no-consistent-benefit';
   }
 
-  const usageSeenInRun = successfulRequests.some((request) => request?.hasUsage === true);
-  const responseCacheSuspected = successfulRequests.filter((request) => (
-    typeof request?.contentTokens === 'number'
-    && request.contentTokens > 0
-    && (
-      request.outputTokens === 0
-      || request.generationTime === 0
-      || (request.hasUsage === false && usageSeenInRun)
-    )
-  )).length;
-  const truncatedRequests = successfulRequests.filter((request) => isTruncated(request)).length;
+  const { responseCacheSuspected, truncatedRequests } =
+    summarizeDiagnostics(successfulRequests);
 
   return {
     cold,
@@ -214,5 +260,8 @@ export function summarizeCache(requests = []) {
 export default {
   extractCacheUsage,
   isTruncated,
+  summarizeDiagnostics,
+  shouldWarnAboutTps,
+  shouldCollapseTpsStatistics,
   summarizeCache
 };
