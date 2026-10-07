@@ -4,6 +4,7 @@ const VALID_MODES = new Set([
   'no-usage',
   'usage-no-cache',
   'usage-explicit-zero-cache',
+  'cache-without-prompt',
   'cache-aware'
 ]);
 
@@ -15,12 +16,13 @@ function sleep(milliseconds) {
  * 启动仅供测试使用的本地 OpenAI-compatible SSE 服务。
  *
  * @param {{
- *   mode?:'no-usage'|'usage-no-cache'|'usage-explicit-zero-cache'|'cache-aware',
+ *   mode?:'no-usage'|'usage-no-cache'|'usage-explicit-zero-cache'|'cache-without-prompt'|'cache-aware',
  *   prefixes?:string[],
  *   hitDelayMs?:number,
  *   missDelayMs?:number,
  *   generationDelayMs?:number,
- *   completionTokens?:number
+ *   completionTokens?:number,
+ *   failContents?:string[]
  * }} options
  * @returns {Promise<{url:string,requests:Array<Object>,close:()=>Promise<void>}>}
  */
@@ -30,7 +32,8 @@ export async function createMockSseServer({
   hitDelayMs = 5,
   missDelayMs = 60,
   generationDelayMs = 3,
-  completionTokens = 1
+  completionTokens = 1,
+  failContents = []
 } = {}) {
   if (!VALID_MODES.has(mode)) {
     throw new RangeError(`无效的 mock SSE 模式: ${mode}`);
@@ -65,6 +68,12 @@ export async function createMockSseServer({
       };
       requests.push(record);
 
+      if (failContents.includes(firstUserContent)) {
+        response.writeHead(500, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Intentional mock request failure' }));
+        return;
+      }
+
       void (async () => {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
         await sleep(cacheHit ? hitDelayMs : missDelayMs);
@@ -74,16 +83,19 @@ export async function createMockSseServer({
         await sleep(generationDelayMs);
 
         if (mode !== 'no-usage') {
-          const promptTokens = Math.max(300, String(firstUserContent ?? '').length);
           const usage = {
-            prompt_tokens: promptTokens,
             completion_tokens: completionTokens
           };
+          if (mode !== 'cache-without-prompt') {
+            usage.prompt_tokens = Math.max(300, String(firstUserContent ?? '').length);
+          }
           if (mode === 'cache-aware') {
             usage.prompt_tokens_details = {
-              cached_tokens: cacheHit ? promptTokens - 100 : 0
+              cached_tokens: cacheHit ? usage.prompt_tokens - 100 : 0
             };
           } else if (mode === 'usage-explicit-zero-cache') {
+            usage.prompt_tokens_details = { cached_tokens: 0 };
+          } else if (mode === 'cache-without-prompt') {
             usage.prompt_tokens_details = { cached_tokens: 0 };
           }
           response.write(`data: ${JSON.stringify({

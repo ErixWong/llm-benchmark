@@ -97,29 +97,45 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 | 字段 | 含义 |
 |------|------|
 | `cold` / `warm` | 两组成功请求的 TTFT 分布摘要：`n`、`median`、`mean`、`min`、`max`；中位数与范围用于描述各组分布 |
-| `pairDeltas` | 按单元顺序的 `warm_i - cold_i`（毫秒）；只包含配对两侧都有有限 TTFT 的单元，负数表示该对 warm 更快 |
+| `pairDeltas` | 按 `cacheUnitIndex` 升序的 `warm_i - cold_i`（毫秒）；只包含同一单元中 miss / hit 两侧都有有限 TTFT 的配对，负数表示该对 warm 更快；缺少单元标识的请求不参与配对 |
 | `pairsTotal` / `pairsFavorable` / `pairsUnfavorable` / `pairsTied` | 有效配对总数，以及差值分别小于、大于、等于 0 的配对数 |
 | `pairedMedianDeltaMs` | `pairDeltas` 的中位数；没有有效配对时为 `null` |
 | `ttftDeltaMs` | `cold.median - warm.median`；正数表示 warm 组中位 TTFT 较低，仅作参考，不参与判定 |
 | `ttftRatio` | `cold.median / warm.median`；warm 中位数为 0 或数据不足时为 `null`，仅作参考 |
 | `insufficientSamples` | cold / warm 任一组有效 TTFT 样本数少于 3，或有效配对少于 3 |
-| `server` | 服务端缓存 usage 汇总；可含 `cachedPromptTokens`、`promptTokens`、`tokenHitRate`、`requestsWithData` 与 `source: "api"`；无可用服务端数据时为 `null` |
+| `server` | 至少一条成功请求上报缓存字段（`cacheSource === "api"`）时为对象，否则为 `null`；可含 `cachedPromptTokens`、`promptTokens`、`tokenHitRate`、`requestsWithData` 与 `source: "api"`。`requestsWithData` 为 0 时对象仍非 null，但 `tokenHitRate` 为 `null` |
 | `verdict` / `reason` | 配对证据判定及对应原因码，按下方规则产生 |
-| `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索 |
-| `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数 |
+| `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索，非零时控制台与 Markdown / HTML 报告显示警告 |
+| `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数；非零时控制台与 Markdown / HTML 报告显示警告 |
 
 `--prefix-tokens` 是客户端 tokenizer 口径的目标值，服务端实际 `prompt_tokens` 可能明显不同（不同 tokenizer 的实测差异可达 30%）；报告中的 `promptTokens` 一律以服务端 usage 为准。两种来源不可混算，沿用“不同来源不得相减”。
 
+JSON 报告的 `raw[]` 新增以下可选逐请求诊断字段（旧报告可能没有这些字段；`cacheIntent` /
+`cacheUnitIndex` 仅在缓存探针中有值）：
+
+| 字段 | 含义 |
+|------|------|
+| `cacheIntent` / `cacheUnitIndex` | 探针请求所属的 miss / hit 意图与单元编号；仅探针请求有值，配对按单元编号而非成功请求过滤后的序位进行 |
+| `promptTokens` | 服务端 `usage.prompt_tokens`；服务端未上报时为 `null`。此字段仅用于服务端缓存命中率分母 |
+| `inputTokens` | 既有输入 token 数语义：优先使用服务端 `prompt_tokens`，缺失时仍回退客户端 tokenizer 估算 |
+| `maxOutputTokens` | 本次请求配置的最大输出 token 上限 |
+| `cachedPromptTokens` | 服务端上报的缓存 prompt token 数；没有可用缓存字段时为 `null` |
+| `cacheSource` | `api` 表示存在有效的服务端缓存字段；服务端未上报或字段无效时为 `unknown` |
+| `hasUsage` | 服务端是否返回 usage；未返回时为 `false` |
+| `retries` | 本请求实际发生的客户端重试次数 |
+
 口径规则：
 
-1. **缓存命中率只依据服务端 usage**。服务端没有提供可用的 prompt/缓存 token 数据时，
-   命中率是 unknown（`server: null`），绝不使用客户端 tokenizer 或冷热延迟估算命中率。
-   服务端报告 `usage` 但**不含任何缓存字段**时，缓存命中率是 unknown（`server: null`），
-   不能按 0 处理——“没有上报”与“上报了 0 命中”是两回事。只有服务端**显式**返回
-   `cached_tokens: 0`（或等价字段为 0）时，才按 0 汇总并给出 `tokenHitRate: 0`。
-2. 配对规则遵循 `buildRequestPlan` 契约：成功请求按 `cacheIntent` 分为 miss / hit 两组，
-   各自按 `requestIndex` 升序排列后，第 i 个 miss 与第 i 个 hit 配成一对。只把两侧 TTFT
-   都是有限数值的配对计入 `pairDeltas`；差值定义为 `warm_i - cold_i`。
+1. **缓存命中率只依据服务端 usage**。`server` 非 null 当且仅当至少一条成功请求上报缓存字段
+   （`cacheSource === "api"`）；`requestsWithData` 只计入缓存字段与服务端 `prompt_tokens`
+   都可用的请求。若 `requestsWithData === 0`，`tokenHitRate` 为 `null`，verdict 不按服务端
+   数据判定而走配对行为分支。服务端未上报缓存字段时 `server` 为 `null`。绝不使用客户端
+   tokenizer 或冷热延迟估算命中率。服务端有 usage 但**不含缓存字段**时，命中率是 unknown，
+   不能按 0 处理；只有服务端**显式**返回 `cached_tokens: 0`（或等价字段为 0）且有可用
+   `prompt_tokens` 时，才汇总为 `tokenHitRate: 0`。
+2. 配对规则遵循 `buildRequestPlan` 契约：成功请求按 `cacheUnitIndex` 分组，同一单元必须各有
+   一条 `cacheIntent` 为 miss / hit 的请求，且两侧 TTFT 都是有限数值，才计入 `pairDeltas`；
+   缺少 `cacheUnitIndex` 的请求不配对。差值定义为 `warm_i - cold_i`。
 3. **判定使用配对差值，而不是冷热组中位数比较**：探针是配对实验，每个单元的 cold/warm
    除 nonce 外共享相同前缀和内容；`warm_i - cold_i` 可抵消服务器随时间发生的性能漂移。
    **逐对差值符号不一致时不下收益结论**。`ttftDeltaMs` / `ttftRatio` 仍保留作分布参考，

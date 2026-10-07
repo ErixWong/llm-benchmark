@@ -276,6 +276,38 @@ describe('reporter', () => {
       }
     });
 
+    it('Markdown 与 HTML 仅在诊断计数非零时显示提示', async () => {
+      const results = makeCacheResults();
+      results.tokenSpeed.metrics.cache.responseCacheSuspected = 3;
+      results.tokenSpeed.metrics.cache.truncatedRequests = 2;
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-diagnostics-'));
+      try {
+        await generateReport(results, dir);
+        const { md, html } = await readReport(dir);
+        const responseWarning = '⚠️ 疑似响应级缓存 3 条：TPS/解码类指标可能无效';
+        const truncationWarning = '⚠️ 2 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）';
+        expect(md).toContain(responseWarning);
+        expect(md).toContain(truncationWarning);
+        expect(html).toContain(responseWarning);
+        expect(html).toContain(truncationWarning);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+
+      const zeroResults = makeCacheResults();
+      const zeroDir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-no-diagnostics-'));
+      try {
+        await generateReport(zeroResults, zeroDir);
+        const { md, html } = await readReport(zeroDir);
+        expect(md).not.toContain('疑似响应级缓存');
+        expect(md).not.toContain('输出被 max_tokens 截断');
+        expect(html).not.toContain('疑似响应级缓存');
+        expect(html).not.toContain('输出被 max_tokens 截断');
+      } finally {
+        await fs.rm(zeroDir, { recursive: true, force: true });
+      }
+    });
+
     it('服务端未报告缓存字段或样本不足时写明结论限制', async () => {
       const results = makeCacheResults();
       results.tokenSpeed.metrics.cache.server = null;

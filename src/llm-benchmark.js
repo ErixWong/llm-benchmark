@@ -263,16 +263,22 @@ export async function runLlmBenchmarkTest(options) {
       }
       return {
         messages: [{ role: 'user', content: plannedRequest.text }],
-        intent: plannedRequest.intent
+        intent: plannedRequest.intent,
+        unitIndex: plannedRequest.unitIndex
       };
     }
     if (useDynamicGeneration) {
       const text = await generateInputText();
-      return { messages: [{ role: 'user', content: text }], intent: undefined };
+      return {
+        messages: [{ role: 'user', content: text }],
+        intent: undefined,
+        unitIndex: undefined
+      };
     }
     return {
       messages: contextMessagesList[requestIndex % contextMessagesList.length],
-      intent: undefined
+      intent: undefined,
+      unitIndex: undefined
     };
   };
 
@@ -290,7 +296,7 @@ export async function runLlmBenchmarkTest(options) {
     
     const runRequest = async (requestIndex) => {
       const requestSendTime = Date.now();
-      const { messages, intent } = await getMessagesForRequest(requestIndex);
+      const { messages, intent, unitIndex } = await getMessagesForRequest(requestIndex);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -305,7 +311,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex,
           requestSendTime,
           responseReceiveTime: Date.now(),
-          ...(intent ? { cacheIntent: intent } : {})
+          ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         };
       } catch (error) {
         completed++;
@@ -320,7 +326,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex,
           requestSendTime,
           responseReceiveTime: Date.now(),
-          ...(intent ? { cacheIntent: intent } : {})
+          ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         };
       }
     };
@@ -372,7 +378,7 @@ export async function runLlmBenchmarkTest(options) {
         
         batchPromises.push(
           (async () => {
-            const { messages, intent } = await getMessagesForRequest(currentRequestIndex);
+            const { messages, intent, unitIndex } = await getMessagesForRequest(currentRequestIndex);
             try {
               const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
               completed++;
@@ -385,7 +391,7 @@ export async function runLlmBenchmarkTest(options) {
                 requestIndex: currentRequestIndex,
                 requestSendTime,
                 responseReceiveTime: Date.now(),
-                ...(intent ? { cacheIntent: intent } : {})
+                ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
               };
             } catch (error) {
               completed++;
@@ -399,7 +405,7 @@ export async function runLlmBenchmarkTest(options) {
                 requestIndex: currentRequestIndex,
                 requestSendTime,
                 responseReceiveTime: Date.now(),
-                ...(intent ? { cacheIntent: intent } : {})
+                ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
               };
             }
           })()
@@ -414,7 +420,7 @@ export async function runLlmBenchmarkTest(options) {
     for (let i = 0; i < samples; i++) {
       spinner.text = `执行Token速度测试 (${i + 1}/${samples})`;
       const requestSendTime = Date.now();
-      const { messages, intent } = await getMessagesForRequest(i);
+      const { messages, intent, unitIndex } = await getMessagesForRequest(i);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -426,7 +432,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex: i,
           requestSendTime,
           responseReceiveTime: Date.now(),
-          ...(intent ? { cacheIntent: intent } : {})
+          ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         });
       } catch (error) {
         logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1);
@@ -437,7 +443,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex: i,
           requestSendTime,
           responseReceiveTime: Date.now(),
-          ...(intent ? { cacheIntent: intent } : {})
+          ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         });
       }
     }
@@ -614,10 +620,12 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
         // token 统计：有 usage 用服务端口径，否则客户端 tokenizer 独立估算（不做跨源相减）
         const { outputTokens, contentTokens, reasoningTokens, tokenSource, reasoningTokenSource } =
           computeTokenStats({ outputText, reasoningText, apiUsage });
-        // 输入token优先使用API返回值
-        const promptTokens = apiUsage?.prompt_tokens
-          ?? countMessagesTokens(messages);
+        // 缓存命中率只使用服务端 prompt_tokens；inputTokens 仍保留客户端回退。
+        const promptTokens = typeof apiUsage?.prompt_tokens === 'number'
+          ? apiUsage.prompt_tokens
+          : null;
         const { cachedPromptTokens, source: cacheSource } = extractCacheUsage(apiUsage, promptTokens);
+        const inputTokens = promptTokens ?? countMessagesTokens(messages);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
         const tps = outputTokens > 0 && generationTime > 0
           ? (outputTokens / (generationTime / 1000)).toFixed(2)
@@ -632,7 +640,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
           outputTokens,
           reasoningTokens,
           contentTokens,
-          inputTokens: promptTokens,
+          inputTokens,
           promptTokens,
           cachedPromptTokens,
           cacheSource,
@@ -913,6 +921,16 @@ function printCacheSummary(cache, config) {
   console.log(`  服务端命中率: ${serverHitRate}；覆盖请求: ${coveredRequests}/${config.samples}`);
   console.log(`  前缀自检: 唯一性 ${prefixValidation?.unique?.ok ? '通过' : '失败'}；`
     + `预热前缀匹配 ${prefixValidation?.verified ?? 0}/${unitCount}`);
+  if (cache.responseCacheSuspected > 0) {
+    console.log(chalk.yellow(
+      `  ⚠️ 疑似响应级缓存 ${cache.responseCacheSuspected} 条：TPS/解码类指标可能无效`
+    ));
+  }
+  if (cache.truncatedRequests > 0) {
+    console.log(chalk.yellow(
+      `  ⚠️ ${cache.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
+    ));
+  }
   if (cache.insufficientSamples) {
     console.log(chalk.yellow('  样本不足，不做结论'));
   }

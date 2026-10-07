@@ -83,11 +83,27 @@ function getCachePrefixSummary(config) {
   return `唯一性 ${unique}；预热前缀匹配 ${validation?.verified ?? 0}/${unitCount}`;
 }
 
+function getCacheDiagnosticWarnings(cache) {
+  const warnings = [];
+  if (cache.responseCacheSuspected > 0) {
+    warnings.push(
+      `⚠️ 疑似响应级缓存 ${cache.responseCacheSuspected} 条：TPS/解码类指标可能无效`
+    );
+  }
+  if (cache.truncatedRequests > 0) {
+    warnings.push(
+      `⚠️ ${cache.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
+    );
+  }
+  return warnings;
+}
+
 function appendCacheMarkdown(lines, cache, config) {
   const cold = cache.cold || {};
   const warm = cache.warm || {};
   const server = cache.server;
   const sampleCount = config?.samples ?? '-';
+  const diagnosticWarnings = getCacheDiagnosticWarnings(cache);
 
   lines.push('### 缓存命中');
   lines.push('');
@@ -113,6 +129,12 @@ function appendCacheMarkdown(lines, cache, config) {
   }
   if (cache.insufficientSamples) {
     lines.push('> 样本不足，不做结论。');
+    lines.push('');
+  }
+  for (const warning of diagnosticWarnings) {
+    lines.push(warning);
+  }
+  if (diagnosticWarnings.length > 0) {
     lines.push('');
   }
 }
@@ -145,7 +167,8 @@ function generateCacheHtml(cache, config) {
     ...(server === null
       ? ['服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。']
       : []),
-    ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : [])
+    ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : []),
+    ...getCacheDiagnosticWarnings(cache)
   ];
 
   return `

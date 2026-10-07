@@ -44,7 +44,12 @@ function makeProbe(warmupMode = 'prefix') {
 
 async function runProbe(
   mode,
-  { maxOutputTokens = 4, completionTokens = 1, warmupMode = 'prefix' } = {}
+  {
+    maxOutputTokens = 4,
+    completionTokens = 1,
+    warmupMode = 'prefix',
+    failContents = []
+  } = {}
 ) {
   const probe = makeProbe(warmupMode);
   const server = await createMockSseServer({
@@ -53,7 +58,8 @@ async function runProbe(
     hitDelayMs: 5,
     missDelayMs: 60,
     generationDelayMs: 3,
-    completionTokens
+    completionTokens,
+    failContents
   });
   const consoleOutput = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -122,6 +128,8 @@ describe('cache-probe integration', () => {
     );
     expect(run.results.raw.map((request) => request.cacheIntent))
       .toEqual(run.requestPlan.map((request) => request.intent));
+    expect(run.results.raw.map((request) => request.cacheUnitIndex))
+      .toEqual(run.requestPlan.map((request) => request.unitIndex));
     expect(run.consoleText).toContain('配对差值（热-冷）');
     expect(run.consoleText).toContain('Reason:');
   });
@@ -186,6 +194,47 @@ describe('cache-probe integration', () => {
     expect(cache.responseCacheSuspected).toBe(0);
   });
 
+  it('服务端未提供 prompt_tokens 时不把客户端输入估算计入缓存命中率', async () => {
+    const run = await runProbe('cache-without-prompt');
+    activeServer = run.server;
+    const cache = run.results.metrics.cache;
+
+    expect(run.results.raw.every((request) => request.promptTokens === null)).toBe(true);
+    expect(run.results.raw.every((request) => request.cachedPromptTokens === 0)).toBe(true);
+    expect(run.results.raw.every((request) => request.inputTokens > 0)).toBe(true);
+    expect(cache.server).toEqual({
+      cachedPromptTokens: 0,
+      promptTokens: 0,
+      tokenHitRate: null,
+      requestsWithData: 0,
+      source: 'api'
+    });
+    expect(cache.verdict).toBe('benefit');
+    expect(cache.reason).toBe('consistent-benefit');
+  });
+
+  it('retains cache unit metadata on successful and failed timed requests', async () => {
+    const probe = makeProbe();
+    const failedText = probe.units[0].cold;
+    const run = await runProbe('cache-aware', { failContents: [failedText] });
+    activeServer = run.server;
+
+    const failedCold = run.results.failed.find((request) => request.requestIndex === 0);
+    const successfulWarm = run.results.raw.find((request) => (
+      request.requestIndex === 1
+    ));
+
+    expect(failedCold).toMatchObject({
+      success: false,
+      cacheIntent: 'miss',
+      cacheUnitIndex: 0
+    });
+    expect(successfulWarm).toMatchObject({
+      cacheIntent: 'hit',
+      cacheUnitIndex: 0
+    });
+  });
+
   it('truncatedRequests 按 completion_tokens 是否触及 max_tokens 计数', async () => {
     const truncatedRun = await runProbe('cache-aware', {
       maxOutputTokens: 1,
@@ -197,6 +246,9 @@ describe('cache-probe integration', () => {
       .toEqual(Array(truncatedRun.requestPlan.length).fill(1));
     expect(truncatedRun.results.metrics.cache.truncatedRequests)
       .toBe(truncatedRun.requestPlan.length);
+    expect(truncatedRun.consoleText).toContain(
+      `⚠️ ${truncatedRun.requestPlan.length} 条请求输出被 max_tokens 截断`
+    );
 
     await activeServer.close();
     activeServer = null;
@@ -210,6 +262,19 @@ describe('cache-probe integration', () => {
     expect(completeRun.results.raw.map((request) => request.outputTokens))
       .toEqual(Array(completeRun.requestPlan.length).fill(3));
     expect(completeRun.results.metrics.cache.truncatedRequests).toBe(0);
+    expect(completeRun.consoleText).not.toContain('输出被 max_tokens 截断');
+    expect(completeRun.consoleText).not.toContain('疑似响应级缓存');
+  });
+
+  it('控制台在检测到疑似响应级缓存时显示诊断提示', async () => {
+    const run = await runProbe('cache-aware', { completionTokens: 0 });
+    activeServer = run.server;
+
+    expect(run.results.metrics.cache.responseCacheSuspected)
+      .toBe(run.requestPlan.length);
+    expect(run.consoleText).toContain(
+      `⚠️ 疑似响应级缓存 ${run.requestPlan.length} 条：TPS/解码类指标可能无效`
+    );
   });
 
   it('显式 cached_tokens: 0 时以服务端零命中为准，即使 warm TTFT 更低', async () => {
