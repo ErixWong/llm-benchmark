@@ -1,3 +1,5 @@
+const MIN_SAMPLES = 3;
+
 /**
  * 提取服务端 usage 中的缓存 prompt token 数。
  *
@@ -91,26 +93,27 @@ export function summarizeCache(requests = []) {
   const ttftRatio = cold.median !== null && warm.median !== null && warm.median !== 0
     ? cold.median / warm.median
     : null;
-  const insufficientSamples = cold.n < 3 || warm.n < 3;
+  const insufficientSamples = cold.n < MIN_SAMPLES || warm.n < MIN_SAMPLES;
 
   const apiRequests = successfulRequests.filter((request) => request?.cacheSource === 'api');
   let server = null;
   if (apiRequests.length > 0) {
     const requestsWithData = apiRequests.filter((request) => (
       typeof request.cachedPromptTokens === 'number' && request.cachedPromptTokens >= 0
+      && typeof request.promptTokens === 'number' && request.promptTokens >= 0
     ));
     const cachedPromptTokens = requestsWithData.reduce(
       (sum, request) => sum + request.cachedPromptTokens,
       0
     );
-    const promptTokenValues = requestsWithData
-      .filter((request) => typeof request.promptTokens === 'number' && request.promptTokens >= 0)
-      .map((request) => request.promptTokens);
-    const promptTokens = promptTokenValues.reduce((sum, value) => sum + value, 0);
+    const promptTokens = requestsWithData.reduce(
+      (sum, request) => sum + request.promptTokens,
+      0
+    );
 
     server = {
-      cachedPromptTokens: requestsWithData.length > 0 ? cachedPromptTokens : null,
-      promptTokens: promptTokenValues.length > 0 ? promptTokens : null,
+      cachedPromptTokens,
+      promptTokens,
       tokenHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : null,
       requestsWithData: requestsWithData.length,
       source: 'api'

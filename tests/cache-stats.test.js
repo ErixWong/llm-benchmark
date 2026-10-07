@@ -106,6 +106,47 @@ describe('cache-stats', () => {
       expect(result.warm.n).toBe(0);
     });
 
+    it('uses the same complete-data requests for both token totals and keeps incomplete API data inconclusive', () => {
+      const requests = groupedRequests([100, 110, 120], [50, 55, 60]);
+      requests.push(
+        cacheRequest('miss', null, {
+          cacheSource: 'api',
+          cachedPromptTokens: 200,
+          promptTokens: null
+        }),
+        cacheRequest('hit', null, {
+          cacheSource: 'api',
+          cachedPromptTokens: 10,
+          promptTokens: 100
+        })
+      );
+
+      const result = summarizeCache(requests);
+      const incompleteOnlyResult = summarizeCache([
+        ...groupedRequests([100, 110, 120], [50, 55, 60]),
+        cacheRequest('miss', null, {
+          cacheSource: 'api',
+          cachedPromptTokens: 200,
+          promptTokens: null
+        })
+      ]);
+
+      expect(result.server.tokenHitRate).toBeLessThanOrEqual(1);
+      expect(result.server.requestsWithData).toBe(1);
+      expect(result.server.cachedPromptTokens).toBe(10);
+      expect(result.server.promptTokens).toBe(100);
+      expect(result.verdict).toBe('benefit');
+
+      expect(incompleteOnlyResult.server).toEqual({
+        cachedPromptTokens: 0,
+        promptTokens: 0,
+        tokenHitRate: null,
+        requestsWithData: 0,
+        source: 'api'
+      });
+      expect(incompleteOnlyResult.verdict).toBe('inconclusive');
+    });
+
     it('returns empty statistics for the group with no requests', () => {
       const coldOnly = summarizeCache(groupedRequests([5, 6, 7], [], {}));
       const warmOnly = summarizeCache(groupedRequests([], [5, 6, 7], {}));

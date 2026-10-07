@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { hashText, countTokens } from './cache-source.js';
 
 const SAFE_CHARACTERS = '23456789abcdefghjkmnpqrstuvwxyz';
-const MAX_PROBE_UNITS = 1000;
 
 /**
  * 生成 4 字符的无混淆随机运行盐。
@@ -34,14 +33,12 @@ export function buildProbeUnits({ materials = [], suffix, runSalt } = {}) {
   if (!Array.isArray(sourceMaterials)) {
     throw new TypeError('materials 必须是数组');
   }
-  if (sourceMaterials.length > MAX_PROBE_UNITS) {
-    throw new RangeError(`materials 最多支持 ${MAX_PROBE_UNITS} 个单元（索引 000–999）`);
-  }
 
   const sharedSuffix = typeof suffix === 'string' ? suffix : '';
+  const width = Math.max(3, String(sourceMaterials.length - 1).length);
 
   return sourceMaterials.map((material, unitIndex) => {
-    const unitNumber = String(unitIndex).padStart(3, '0');
+    const unitNumber = String(unitIndex).padStart(width, '0');
     const warmNonce = `[c-${runSalt}-w${unitNumber}]`;
     const coldNonce = `[c-${runSalt}-c${unitNumber}]`;
     const primed = warmNonce + material.text;

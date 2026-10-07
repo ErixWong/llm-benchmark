@@ -33,21 +33,35 @@ describe('cache-probe', () => {
       }
     });
 
-    it('uses fixed-width indices and rejects indices that exceed three digits', () => {
-      const indexedMaterials = Array.from({ length: 11 }, (_, id) => ({
+    it('uses a fixed nonce width for each run and widens beyond three digits', () => {
+      const indexedMaterials = Array.from({ length: 1001 }, (_, id) => ({
         id,
         text: `material ${id}`,
         tokens: 2
       }));
-      const units = buildProbeUnits({ materials: indexedMaterials, runSalt: 'abcd' });
-
-      expect(units[0].warmNonce).toMatch(/w000\]$/);
-      expect(units[10].warmNonce).toMatch(/w010\]$/);
-      expect(units[0].warmNonce).toHaveLength(units[10].warmNonce.length);
-      expect(() => buildProbeUnits({
-        materials: Array.from({ length: 1001 }, () => ({ id: 'x', text: '', tokens: 0 })),
+      const units = buildProbeUnits({
+        materials: indexedMaterials,
+        suffix: '\nrequest',
         runSalt: 'abcd'
-      })).toThrow(RangeError);
+      });
+
+      expect(units[0].warmNonce).toMatch(/w0000\]$/);
+      expect(units[10].warmNonce).toMatch(/w0010\]$/);
+      expect(units[1000].warmNonce).toMatch(/w1000\]$/);
+      expect(new Set(units.map((unit) => unit.warmNonce)).size).toBe(1001);
+      expect(new Set(units.map((unit) => unit.coldNonce)).size).toBe(1001);
+      expect(units.every((unit) => unit.warmNonce.length === units[0].warmNonce.length))
+        .toBe(true);
+      expect(units.every((unit) => unit.coldNonce.length === units[0].coldNonce.length))
+        .toBe(true);
+      expect(checkUniquePrefixes(units)).toEqual({ ok: true, duplicates: [] });
+    });
+
+    it('keeps three-digit nonces for a single unit', () => {
+      const [unit] = buildProbeUnits({ materials: [materials[0]], runSalt: 'abcd' });
+
+      expect(unit.warmNonce).toMatch(/w000\]$/);
+      expect(unit.coldNonce).toMatch(/c000\]$/);
     });
 
     it('includes a hash and token count for the exact primed prefix', () => {
