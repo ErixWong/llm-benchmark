@@ -38,12 +38,18 @@ function makeResults() {
       timestamp: new Date().toISOString(),
       config: {
         model: 'evil"><script>alert(1)</script>',
-        url: 'http://x/<script>alert(2)</script>',
+        url: 'http://x/<script>alert(2)</script>?api_key=URL-SECRET',
+        apiKey: 'API-KEY-SECRET',
         inputTokens: 1000,
         maxOutputTokens: 256,
         concurrency: 4,
         concurrencyMode: 'pipeline',
         samples: 3,
+        timeout: 90000,
+        extraBody: {
+          chat_template_kwargs: { enable_thinking: false },
+          apiKey: 'EXTRA-BODY-SECRET'
+        },
         totalTime: 20000,
         sampleCount: 0
       },
@@ -84,6 +90,14 @@ function makeCacheResults() {
     prefixHash: 'abcdef123456',
     prefixTokens: 100
   }];
+  results.tokenSpeed.config.cacheProbe = true;
+  results.tokenSpeed.config.warmupMode = 'model';
+  results.tokenSpeed.config.prefixTokens = 4096;
+  results.tokenSpeed.config.runSalt = 'run-salt-sample';
+  results.tokenSpeed.config.bank = {
+    name: 'chunked-samples',
+    hash: '123456789abc'
+  };
   results.tokenSpeed.config.prefixValidation = {
     unique: { ok: true },
     verified: 1
@@ -150,12 +164,20 @@ describe('reporter', () => {
 
   describe('JSON 报告', () => {
     it('写入 metricsVersion', () => {
-      expect(JSON.parse(report.json).metricsVersion).toBe(1.1);
+      expect(JSON.parse(report.json).metricsVersion).toBe(1.2);
     });
 
     it('默认剥离模型输出全文', () => {
       expect(report.json).not.toContain(SECRET_VISIBLE);
       expect(report.json).not.toContain(SECRET_REASONING);
+    });
+
+    it('报告配置中的 API 密钥、URL 查询密钥与 extra-body 密钥均脱敏', () => {
+      for (const secret of ['API-KEY-SECRET', 'URL-SECRET', 'EXTRA-BODY-SECRET']) {
+        expect(report.json).not.toContain(secret);
+        expect(report.md).not.toContain(secret);
+        expect(report.html).not.toContain(secret);
+      }
     });
 
     it('剥离后仍保留数值字段', () => {
@@ -214,7 +236,7 @@ describe('reporter', () => {
     });
 
     it('HTML 上下文中模型名与 URL 被转义', () => {
-      expect(report.html).toContain('&lt;script&gt;alert(2)');
+      expect(report.html).toContain('%3Cscript%3Ealert(2)');
       expect(report.html).toContain('&lt;script&gt;alert(1)');
     });
 
@@ -224,9 +246,26 @@ describe('reporter', () => {
   });
 
   describe('Markdown 报告', () => {
+    it('测试时间与页脚统一使用明确的 UTC+8 时间', () => {
+      const topTime = report.md.match(/\*\*测试时间\*\*: (.+)/)?.[1];
+      const footerTime = report.md.match(/\*报告生成时间: (.+)\*/)?.[1];
+
+      expect(topTime).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+08:00$/);
+      expect(footerTime).toBe(topTime);
+    });
+
+    it('配置表提供复现参数但不输出密钥字段', () => {
+      expect(report.md).toContain('| API URL |');
+      expect(report.md).toContain('| 请求超时 | 90000 ms |');
+      expect(report.md).toContain('| Sample数量（-n） | 0 |');
+      expect(report.md).toContain('| --extra-body | {"chat_template_kwargs"');
+      expect(report.md).not.toContain('| API Key |');
+    });
+
     it('包含 TTFO 与 token 来源，且不含已移除的解码总吞吐', () => {
       expect(report.md).toContain('TTFO');
       expect(report.md).toContain('Token 计数来源');
+      expect(report.md).toContain('TTFT 到首个生成 token（含 reasoning）；TTFO 到首个可见内容。');
       expect(report.md).not.toContain('解码总吞吐');
     });
 
@@ -243,6 +282,91 @@ describe('reporter', () => {
     it('普通报告不添加缓存区块', () => {
       expect(report.md).not.toContain('### 缓存命中');
       expect(report.html).not.toContain('class="cache-probe"');
+    });
+
+    it('普通报告也显示通用诊断，且诊断为零时不显示警告', async () => {
+      const results = makeResults();
+      results.tokenSpeed.metrics.diagnostics = {
+        truncatedRequests: 1,
+        responseCacheSuspected: 2
+      };
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-general-diagnostics-'));
+      try {
+        await generateReport(results, dir);
+        const { json, md, html } = await readReport(dir);
+        expect(JSON.parse(json).tokenSpeed.metrics.diagnostics).toEqual({
+          truncatedRequests: 1,
+          responseCacheSuspected: 2
+        });
+        expect(md).toContain('⚠️ 1 条请求输出被 max_tokens 截断');
+        expect(md).toContain('⚠️ 疑似响应级缓存 2 条');
+        expect(html).toContain('⚠️ 1 条请求输出被 max_tokens 截断');
+        expect(html).toContain('⚠️ 疑似响应级缓存 2 条');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+
+      const zeroResults = makeResults();
+      zeroResults.tokenSpeed.metrics.diagnostics = {
+        truncatedRequests: 0,
+        responseCacheSuspected: 0
+      };
+      const zeroDir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-zero-general-diagnostics-'));
+      try {
+        await generateReport(zeroResults, zeroDir);
+        const { md, html } = await readReport(zeroDir);
+        expect(md).not.toContain('疑似响应级缓存');
+        expect(md).not.toContain('输出被 max_tokens 截断');
+        expect(html).not.toContain('疑似响应级缓存');
+        expect(html).not.toContain('输出被 max_tokens 截断');
+      } finally {
+        await fs.rm(zeroDir, { recursive: true, force: true });
+      }
+    });
+
+    it('输出过短时在三份报告中提示，且普通长度输出不提示', async () => {
+      const results = makeResults();
+      results.tokenSpeed.metrics.outputTokens.median = 4;
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-short-output-'));
+      try {
+        await generateReport(results, dir);
+        const { md, html } = await readReport(dir);
+        expect(md).toContain('⚠️ 输出过短，TPS 不具意义');
+        expect(html).toContain('⚠️ 输出过短，TPS 不具意义');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+
+      expect(report.md).not.toContain('输出过短，TPS 不具意义');
+      expect(report.html).not.toContain('输出过短，TPS 不具意义');
+    });
+
+    it('TPS 样本少于三条时合并统计行并标注样本不足', async () => {
+      const results = makeResults();
+      results.tokenSpeed.metrics.tps.values = [52.3];
+      results.tokenSpeed.metrics.tps.mean = 52.3;
+      results.tokenSpeed.metrics.tps.median = 52.3;
+      results.tokenSpeed.metrics.tps.min = 52.3;
+      results.tokenSpeed.metrics.tps.max = 52.3;
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-few-samples-'));
+      try {
+        await generateReport(results, dir);
+        const { md, html } = await readReport(dir);
+        expect(md).toContain('| TPS统计（样本不足，n=1） | 52.30 tokens/s（平均/中位数/最小/最大相同） |');
+        const tpsSection = md.split('### 首Token延迟')[0];
+        expect(tpsSection.match(/\| (平均|中位数|最小|最大) \|/g)).toBeNull();
+        expect(html).toContain('TPS统计（样本不足，n=1）');
+        expect(html).toContain('52.30 tokens/s（平均/中位数/最小/最大相同）');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('删除绝对阈值自动判读，不在报告中输出场景优劣结论', () => {
+      expect(report.md).not.toContain('适合实时交互场景');
+      expect(report.md).not.toContain('响应迅速');
+      expect(report.html).not.toContain('适合实时交互场景');
+      expect(report.html).not.toContain('响应迅速');
     });
 
     it('探针报告包含冷热统计、服务端覆盖率及前缀自检', async () => {
@@ -265,12 +389,22 @@ describe('reporter', () => {
         expect(md).toContain('50.00%');
         expect(md).toContain('6/6');
         expect(md).toContain('唯一性 通过；预热前缀匹配 1/1');
+        expect(md).toContain('| 缓存探针单元数 | 1 |');
+        expect(md).toContain('| 目标前缀Token数 | 4096 |');
+        expect(md).toContain('| warmupMode | model |');
+        expect(md).toContain('| runSalt | run-salt-sample |');
+        expect(md).toContain('| 素材库（config.bank） | {"name"');
         expect(md).not.toContain('prefill 耗时');
         expect(html).toContain('class="card cache-probe"');
         expect(html).toContain('服务端 token 命中率');
         expect(html).toContain('一致有利配对');
         expect(html).toContain('配对差值一致支持收益');
         expect(html).toContain('唯一性 通过；预热前缀匹配 1/1');
+        expect(html).toContain('<h3 style="color: #3182ce; font-size: 14px;');
+        expect(html).toContain('📊 TPS 分布');
+        expect(html).toContain('⏱️ TTFT 分布');
+        expect(html).toContain('🔄 输入/输出Token分布');
+        expect(html).toContain('请求时间线（甘特图）');
       } finally {
         await fs.rm(dir, { recursive: true, force: true });
       }
