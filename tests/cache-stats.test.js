@@ -252,6 +252,14 @@ describe('cache-stats', () => {
       expect(result.reason).toBe('insufficient-samples');
     });
 
+    it('keeps a computable TTFT ratio when sample counts are insufficient', () => {
+      const result = summarizeCache(groupedRequests([100, 120], [50, 60]));
+
+      expect(result.insufficientSamples).toBe(true);
+      expect(result.ttftRatio).toBe(2);
+      expect(result.verdict).toBe('inconclusive');
+    });
+
     it('returns no-benefit when the server reports zero token hit rate despite faster warm TTFT', () => {
       const requests = groupedRequests([100, 110, 120], [50, 55, 60], {
         cacheSource: 'api',
