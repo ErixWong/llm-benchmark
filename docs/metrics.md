@@ -11,7 +11,7 @@
 | `ttfo` | 请求发出 → 收到首个**可见 content** token（Time to First Output Token）。代表「用户看到第一个字」的延迟 |
 | `tps` | 单请求口径：输出 token 数 ÷（首个 token → 最后一个 token 的时长），**不含 TTFT** |
 | `throughputTps` | 总输出 token ÷（首个请求发出 → 最后一个响应收到）。**系统级吞吐**，墙钟口径 |
-| `decodeThroughputTps` | 所有成功请求的输出 token 总数 ÷ 解码窗口**并集**时长；重叠窗口只计一次，不是把解码时长相加 |
+| `decodeWindowThroughputTps` | 所有成功请求的输出 token 总数 ÷ 解码窗口**并集**时长；重叠窗口只计一次，不是把解码时长相加 |
 | `effectiveDecodeConcurrency` | 所有成功请求的解码时长之和 ÷ 总测试墙钟时长；实际有效解码并发度，上界为客户端并发数 |
 | `errors.rate` | 失败请求数 ÷ 总请求数 |
 
@@ -21,11 +21,11 @@
 TTFT。请求可能已在飞、却仍在等待首 token（或处于排队、批次间隙），这段时间不产 token，
 所以墙钟吞吐会低于「平均单流 TPS × 客户端并发数」，报告原先无法明确呈现这部分差额。
 
-`decodeThroughputTps` 的每个请求解码窗口为
+`decodeWindowThroughputTps` 的每个请求解码窗口为
 `[responseReceiveTime - generationTime, responseReceiveTime]`。它用所有成功请求的输出 token
 总数除以这些窗口的**区间并集时长**，而不是除以解码时长之和：多个请求同时解码时，重叠的
 墙钟区间只经过一次，避免把同一段时间重复算作时间分母。并发为 1 时只有一个解码窗口，
-因此 `decodeThroughputTps` 等于该请求的 `tps`（受 `tps` 展示精度影响）。
+因此 `decodeWindowThroughputTps` 等于该请求的 `tps`（受 `tps` 展示精度影响）。
 
 `effectiveDecodeConcurrency` 则按各请求解码时长求和，再除以总测试墙钟时长。它衡量这段测试期间
 平均有多少个请求实际处于解码阶段，而不是配置的客户端并发数；TTFT、排队与批次间隙会降低
@@ -41,7 +41,7 @@ throughputTps = 平均单流TPS × effectiveDecodeConcurrency
 TPS」是按各请求解码时长加权的速率；当各请求 TPS 差异较大时，它不一定等于 `metrics.tps.mean`
 的算术平均。差额体现了请求在 TTFT、排队和批次间隙期间虽在飞但没有生成 token。
 
-`decodeThroughputTps` 是本工具自定的派生指标，并非 AIPerf 或 vLLM 的聚合口径；AIPerf 提供的
+`decodeWindowThroughputTps` 是本工具自定的派生指标，并非 AIPerf 或 vLLM 的聚合口径；AIPerf 提供的
 `decode_duration = request_latency - ttft` 是逐请求指标，不是这里的并集聚合吞吐。
 
 ### 为什么 TTFT 要包含 reasoning token
@@ -72,7 +72,7 @@ NVIDIA / vLLM / AIPerf 都只有两个吞吐口径：
 
 把「单用户 TPS」乘以**配置的客户端并发**来推算系统吞吐，在客户端并发超过服务端实际并行度时会
 **严重高估**（实测可达 2 倍以上）。本工具不使用这种估算；除了墙钟口径的 `throughputTps`，
-现在还提供基于实际解码时长计算的 `effectiveDecodeConcurrency` 与 `decodeThroughputTps`。
+现在还提供基于实际解码时长计算的 `effectiveDecodeConcurrency` 与 `decodeWindowThroughputTps`。
 
 ## 口径版本
 
@@ -80,10 +80,10 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 
 | 版本 | 含义 |
 |------|------|
-| 1.3 | 新增 `metrics.decodeThroughputTps` 与 `metrics.effectiveDecodeConcurrency`，仅增加可选指标字段，非 BREAKING |
+| 1.3 | 新增 `metrics.decodeWindowThroughputTps` 与 `metrics.effectiveDecodeConcurrency`，仅增加可选指标字段，非 BREAKING |
 | 1.2 | 新增始终存在的 `metrics.diagnostics`，汇总截断与疑似响应级缓存诊断；探针结果继续保留 `metrics.cache` 中的旧诊断字段 |
 | 1.1 | 新增可选的 `metrics.cache` 缓存探针结果（含配对判定规则、配对统计与 `reason`） |
-| 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除旧定义的 `decodeThroughputTps`（单流 TPS × 客户端并发） |
+| 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
 | 无该字段 | 旧口径：`ttft` 只统计 content token。**与新数据不可直接对比** |
 
 缓存探针功能与其判定规则均在同一未发布版本内定型，因此不涉及对已发布契约的不兼容变更。

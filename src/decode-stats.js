@@ -42,7 +42,7 @@ export function mergeIntervals(intervals = []) {
  * @returns {{
  *   decodeWindowMs:number,
  *   decodeDurationMs:number,
- *   decodeThroughputTps:number|null,
+ *   decodeWindowThroughputTps:number|null,
  *   effectiveDecodeConcurrency:number|null
  * }}
  */
@@ -54,7 +54,7 @@ export function computeDecodeStats(requests = [], totalTimeMs) {
     return {
       decodeWindowMs: 0,
       decodeDurationMs: 0,
-      decodeThroughputTps: null,
+      decodeWindowThroughputTps: null,
       effectiveDecodeConcurrency: null
     };
   }
@@ -81,7 +81,7 @@ export function computeDecodeStats(requests = [], totalTimeMs) {
 
   const decodeWindowMs = mergeIntervals(intervals)
     .reduce((duration, [start, end]) => duration + end - start, 0);
-  const decodeThroughputTps = decodeWindowMs > 0
+  const decodeWindowThroughputTps = decodeWindowMs > 0
     ? totalOutputTokens / decodeWindowMs * 1000
     : null;
   const effectiveDecodeConcurrency = Number.isFinite(totalTimeMs) && totalTimeMs > 0
@@ -91,7 +91,7 @@ export function computeDecodeStats(requests = [], totalTimeMs) {
   return {
     decodeWindowMs,
     decodeDurationMs,
-    decodeThroughputTps,
+    decodeWindowThroughputTps,
     effectiveDecodeConcurrency
   };
 }

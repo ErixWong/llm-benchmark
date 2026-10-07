@@ -151,7 +151,7 @@ describe('cache-probe integration', () => {
     const { requests } = run.server;
     const unitCount = run.units.length;
 
-    expect(run.results.metrics).toHaveProperty('decodeThroughputTps');
+    expect(run.results.metrics).toHaveProperty('decodeWindowThroughputTps');
     expect(run.results.metrics).toHaveProperty('effectiveDecodeConcurrency');
     expect(requests.slice(0, unitCount).map((request) => request.firstUserContent))
       .toEqual(run.units.map((unit) => unit.primed));

@@ -26,11 +26,11 @@ describe('computeDecodeStats', () => {
     expect(computeDecodeStats([], 1000)).toEqual({
       decodeWindowMs: 0,
       decodeDurationMs: 0,
-      decodeThroughputTps: null,
+      decodeWindowThroughputTps: null,
       effectiveDecodeConcurrency: null
     });
     expect(computeDecodeStats([{ success: false, generationTime: 1000 }], 1000)).toMatchObject({
-      decodeThroughputTps: null,
+      decodeWindowThroughputTps: null,
       effectiveDecodeConcurrency: null
     });
   });
@@ -44,7 +44,7 @@ describe('computeDecodeStats', () => {
     expect(stats).toEqual({
       decodeWindowMs: 1000,
       decodeDurationMs: 1000,
-      decodeThroughputTps: 100,
+      decodeWindowThroughputTps: 100,
       effectiveDecodeConcurrency: 0.5
     });
   });
@@ -63,7 +63,7 @@ describe('computeDecodeStats', () => {
     ], 500);
 
     expect(stats.decodeWindowMs).toBe(0);
-    expect(stats.decodeThroughputTps).toBeNull();
+    expect(stats.decodeWindowThroughputTps).toBeNull();
     expect(stats.effectiveDecodeConcurrency).toBe(0);
   });
 
@@ -76,7 +76,7 @@ describe('computeDecodeStats', () => {
       tps: 100
     };
 
-    expect(computeDecodeStats([request], 2500).decodeThroughputTps)
+    expect(computeDecodeStats([request], 2500).decodeWindowThroughputTps)
       .toBeCloseTo(request.tps, 6);
   });
 
@@ -90,7 +90,7 @@ describe('computeDecodeStats', () => {
     expect(stats.decodeWindowMs).toBe(1000);
     expect(stats.decodeDurationMs).toBe(2000);
     expect(stats.effectiveDecodeConcurrency).toBeCloseTo(2, 6);
-    expect(stats.decodeThroughputTps).toBeCloseTo(
+    expect(stats.decodeWindowThroughputTps).toBeCloseTo(
       requests.reduce((sum, request) => sum + request.tps, 0),
       6
     );

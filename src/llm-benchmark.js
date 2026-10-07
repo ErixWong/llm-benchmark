@@ -733,7 +733,7 @@ function processTokenSpeedResult(results, config) {
       failedCount: failedResults.length,
       metrics: {
         diagnostics,
-        decodeThroughputTps: decodeStats.decodeThroughputTps,
+        decodeWindowThroughputTps: decodeStats.decodeWindowThroughputTps,
         effectiveDecodeConcurrency: decodeStats.effectiveDecodeConcurrency,
         ...(config.cacheProbe ? { cache: summarizeCache(successResults) } : {})
       }
@@ -769,7 +769,7 @@ function processTokenSpeedResult(results, config) {
         values: tpsValues
       },
       throughputTps,        // 端到端墙钟吞吐 = 总输出tokens / 总测试时间（与 vLLM/AIPerf 口径一致）
-      decodeThroughputTps: decodeStats.decodeThroughputTps,
+      decodeWindowThroughputTps: decodeStats.decodeWindowThroughputTps,
       effectiveDecodeConcurrency: decodeStats.effectiveDecodeConcurrency,
       ttft: {
         mean: average(ttftValues),
@@ -905,8 +905,8 @@ function printTokenSpeedSummary(result) {
     console.log(chalk.yellow('  ⚠️ 输出过短，TPS 不具意义'));
   }
   console.log(`  整体吞吐: ${formatTps(result.metrics.throughputTps)} (总输出tokens / 总测试时间，墙钟口径)`);
-  const decodeThroughput = result.metrics.decodeThroughputTps;
-  console.log(`  解码期聚合吞吐: ${decodeThroughput === null ? 'N/A' : formatTps(decodeThroughput)} (总输出tokens / 解码窗口并集)`);
+  const decodeWindowThroughput = result.metrics.decodeWindowThroughputTps;
+  console.log(`  解码窗口并集吞吐: ${decodeWindowThroughput === null ? 'N/A' : formatTps(decodeWindowThroughput)} (总输出tokens / 解码窗口并集)`);
   const effectiveConcurrency = result.metrics.effectiveDecodeConcurrency;
   console.log(`  有效解码并发度: ${effectiveConcurrency === null ? 'N/A' : effectiveConcurrency.toFixed(2)} (Σ解码时长 / 总测试时间)`);
   console.log(chalk.gray('  关系：throughputTps = 平均单流 TPS × effectiveDecodeConcurrency；TTFT、排队与批次间隙不产 token。'));
