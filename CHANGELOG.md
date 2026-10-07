@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `-n N` 的样本选取改为**确定性**（seeded 环序轮转，新增 `--sample-seed` / `SAMPLE_SEED`，默认 42）：
+  此前用 `Math.random` 洗牌 + `fs.readdir` 顺序，同一命令两次运行可能选中不同素材，导致结果差异无法归因；
+  现在同 seed 结果一致，且一个完整周期内每个文件被选中次数差 ≤ 1（覆盖均匀）。报告 `config` 记录
+  `sampleSeed` / `sampleFiles` / `sampleSelections`。**注意：与旧结果的对比需注意素材差异**
 - `--cache-probe --warmup-mode model` 现在先做唯一 nonce 的模型/JIT 预热，再串行预热测量前缀；
   探针下 `--warmup-mode none` 会报错，非探针的 `none` 仍表示跳过预热
 - **BREAKING（指标口径）**: `ttft` 现在取**首个生成 token**，包含 reasoning token。
