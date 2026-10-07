@@ -150,7 +150,7 @@ describe('reporter', () => {
 
   describe('JSON 报告', () => {
     it('写入 metricsVersion', () => {
-      expect(JSON.parse(report.json).metricsVersion).toBe(2);
+      expect(JSON.parse(report.json).metricsVersion).toBe(1.1);
     });
 
     it('默认剥离模型输出全文', () => {

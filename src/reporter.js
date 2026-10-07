@@ -177,10 +177,9 @@ function jsonForScript(value) {
 /**
  * 指标口径版本：major 表示既有字段含义发生不兼容变更；minor 表示纯新增字段。
  * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
- * v1.1: 新增可选的 metrics.cache 缓存探针结果
- * v2.0: 缓存 verdict 改为配对 TTFT 证据判定，旧版冷热组中位数判定不可直接对比
+ * v1.1: 新增可选的 metrics.cache 缓存探针结果（含配对判定规则；该功能与其判定规则在同一未发布版本内定型）
  */
-const METRICS_VERSION = 2.0;
+const METRICS_VERSION = 1.1;
 
 /**
  * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）

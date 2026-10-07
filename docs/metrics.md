@@ -48,10 +48,11 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 
 | 版本 | 含义 |
 |------|------|
-| 2.0 | 缓存 `verdict` 改用配对 TTFT 证据；新增配对统计与 `reason` |
-| 1.1 | 新增可选的 `metrics.cache` 缓存探针结果；既有指标字段的含义不变 |
+| 1.1 | 新增可选的 `metrics.cache` 缓存探针结果（含配对判定规则、配对统计与 `reason`） |
 | 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
 | 无该字段 | 旧口径：`ttft` 只统计 content token。**与新数据不可直接对比** |
+
+缓存探针功能与其判定规则均在同一未发布版本内定型，因此不涉及对已发布契约的不兼容变更。
 
 版本使用 `[major].[minor]` 形式：`major` 仅在既有字段含义发生不兼容变更时递增；
 `minor` 仅用于纯新增、向后兼容的字段。由于版本号以 JSON Number 保存，`minor` 只能是

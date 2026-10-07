@@ -8,9 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **BREAKING（缓存探针判定口径）**: 缓存 `verdict` 改为根据按单元配对的 TTFT 差值判定，
-  不再比较 cold / warm 两组中位数；新增配对摘要与 `reason` 原因码，旧版 verdict 不可直接对比。
-  JSON `metricsVersion` 更新为 `2.0`。详见 `docs/metrics.md`
 - `--cache-probe --warmup-mode model` 现在先做唯一 nonce 的模型/JIT 预热，再串行预热测量前缀；
   探针下 `--warmup-mode none` 会报错，非探针的 `none` 仍表示跳过预热
 - **BREAKING（指标口径）**: `ttft` 现在取**首个生成 token**，包含 reasoning token。
@@ -22,12 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `--cache-probe` 冷/热缓存探针：串行预热前缀、交错测量 cold/warm，并在 `metrics.cache`
-  与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要
+  与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要；缓存 `verdict`
+  根据按单元配对的 TTFT 差值判定，而非冷热组中位数，并提供配对摘要与 `reason` 原因码。
+  JSON 报告 `metricsVersion` 为 `1.1`（仅新增缓存探针字段，非 BREAKING）；不打开
+  `--cache-probe` 时行为与报告输出不变。详见 `docs/metrics.md`
 - 新增 `src/cache-source.js`、`src/cache-probe.js`、`src/cache-plan.js` 三个缓存探针模块及单测
 - 新增 `--warmup-mode`、`--prefix-tokens`、`--cache-suffix`、`--cache-seed` 与 `--retry`
   参数；`--retry 0` 可关闭请求重试
-- JSON 报告 `metricsVersion` 更新为 `1.1`，仅增加缓存探针字段，**非 BREAKING**：
-  既有字段含义未变；不启用 `--cache-probe` 时报告不增加缓存区块，原有结果内容保持不变
 - `ttfo`（Time to First Output Token）：首个**非 reasoning** token 的延迟，
   保留“用户看到第一个字”的视角；已进控制台摘要、Markdown 与 HTML 报告
 - `reasoningTokens` / `contentTokens` 拆分，以及 `tokenSource` / `reasoningTokenSource`
