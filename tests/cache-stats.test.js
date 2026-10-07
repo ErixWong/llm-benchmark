@@ -253,7 +253,51 @@ describe('cache-stats', () => {
       expect(result.verdict).toBe('no-benefit');
     });
 
-    it('counts each request once when any response-cache suspicion condition matches', () => {
+    it('does not suspect response cache when the run consistently omits usage', () => {
+      const result = summarizeCache([
+        cacheRequest('miss', null, {
+          hasUsage: false,
+          outputTokens: 4,
+          generationTime: 10,
+          contentTokens: 4
+        }),
+        cacheRequest('hit', null, {
+          hasUsage: false,
+          outputTokens: 5,
+          generationTime: 12,
+          contentTokens: 5
+        })
+      ]);
+
+      expect(result.responseCacheSuspected).toBe(0);
+    });
+
+    it('suspects a request that omits usage when other requests in the run report usage', () => {
+      const result = summarizeCache([
+        cacheRequest('miss', null, { hasUsage: true, contentTokens: 4 }),
+        cacheRequest('miss', null, { hasUsage: true, contentTokens: 5 }),
+        cacheRequest('hit', null, { hasUsage: true, contentTokens: 6 }),
+        cacheRequest('hit', null, {
+          hasUsage: false,
+          outputTokens: 5,
+          generationTime: 12,
+          contentTokens: 7
+        })
+      ]);
+
+      expect(result.responseCacheSuspected).toBe(1);
+    });
+
+    it('does not suspect response cache when every request omits the hasUsage field', () => {
+      const result = summarizeCache([
+        cacheRequest('miss', null, { contentTokens: 4 }),
+        cacheRequest('hit', null, { contentTokens: 5 })
+      ]);
+
+      expect(result.responseCacheSuspected).toBe(0);
+    });
+
+    it('counts output-token and generation-time suspicion conditions', () => {
       const result = summarizeCache([
         cacheRequest('miss', null, { outputTokens: 0, contentTokens: 4 }),
         cacheRequest('miss', null, { generationTime: 0, contentTokens: 5 }),
@@ -267,7 +311,7 @@ describe('cache-stats', () => {
         cacheRequest('miss', null, { outputTokens: 0, contentTokens: 0 })
       ]);
 
-      expect(result.responseCacheSuspected).toBe(4);
+      expect(result.responseCacheSuspected).toBe(3);
     });
 
     it('counts truncated successful requests and ignores failed requests', () => {

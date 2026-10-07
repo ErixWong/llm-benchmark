@@ -137,13 +137,14 @@ export function summarizeCache(requests = []) {
     verdict = 'inconclusive';
   }
 
+  const usageSeenInRun = successfulRequests.some((request) => request?.hasUsage === true);
   const responseCacheSuspected = successfulRequests.filter((request) => (
     typeof request?.contentTokens === 'number'
     && request.contentTokens > 0
     && (
       request.outputTokens === 0
       || request.generationTime === 0
-      || request.hasUsage === false
+      || (request.hasUsage === false && usageSeenInRun)
     )
   )).length;
   const truncatedRequests = successfulRequests.filter((request) => isTruncated(request)).length;
