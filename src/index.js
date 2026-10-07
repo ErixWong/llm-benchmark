@@ -14,6 +14,7 @@ import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
+import { selectSampleFiles } from './sample-select.js';
 import { buildMaterial, hashMaterialBank } from './cache-source.js';
 import {
   buildProbeUnits,
@@ -97,29 +98,29 @@ async function scanSampleFiles(dir, baseDir = dir) {
     }
   }
   
-  return files;
+  return files.sort();
 }
 
 /**
  * 创建动态生成输入文本的函数
  * @param {number} sampleCount - 样本数量
  * @param {string[]} sampleFiles - 样本文件列表
- * @returns {Function} 生成输入文本的函数
+ * @param {number} sampleSeed - 样本选择种子
+ * The returned function takes a zero-based request index; estimates and warm-up use 0.
+ * @returns {(requestIndex?: number) => Promise<string>} 输入文本生成函数
  */
-function createInputGenerator(sampleCount, sampleFiles) {
-  return async () => {
+function createInputGenerator(sampleCount, sampleFiles, sampleSeed) {
+  return async (requestIndex = 0) => {
     if (sampleCount > 0 && sampleFiles.length > 0) {
-      const shuffled = [...sampleFiles].sort(() => Math.random() - 0.5);
-      const selectedFiles = shuffled.slice(0, Math.min(sampleCount, sampleFiles.length));
+      const selectedFiles = selectSampleFiles(sampleFiles, sampleCount, requestIndex, sampleSeed);
       
       const dataDir = path.join(process.cwd(), 'data');
+      if (process.env.DEBUG) {
+        console.log(chalk.gray(`请求 #${requestIndex + 1} 选中样本: ${selectedFiles.join(', ')}`));
+      }
       const contents = await Promise.all(
         selectedFiles.map(f => fs.readFile(path.join(dataDir, f), 'utf-8'))
       );
-      
-      if (process.env.DEBUG) {
-        console.log(chalk.gray(`选中样本: ${selectedFiles.join(', ')}`));
-      }
       
       return PROMPT_TEMPLATE + contents.join('\n\n---\n\n');
     }
@@ -144,6 +145,7 @@ program
   .option('--extra-body <json>', '附加请求体参数（JSON字符串），例如 \'{"chat_template_kwargs":{"enable_thinking":false}}\'', process.env.EXTRA_BODY || '')
   .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .option('-q, --quiet', '静默模式，仅输出最终结果')
+  .option('--sample-seed <number>', '确定性样本轮转种子', process.env.SAMPLE_SEED || '42')
   .option('--cache-probe', '启用缓存命中探针', process.env.CACHE_PROBE === 'true')
   .option('--warmup-mode <mode>', '预热模式: auto | prefix | model | none', process.env.WARMUP_MODE || 'auto')
   .option('--prefix-tokens <number>', '每个单元素材的目标前缀Token数', process.env.PREFIX_TOKENS || '4096')
@@ -179,6 +181,7 @@ program
     const timeout = safeParseInt(options.timeout, 90, 'timeout') * 1000;
     const concurrencyMode = options.concurrencyMode;
     const cacheProbeEnabled = options.cacheProbe || false;
+    const sampleSeed = safeParseInt(options.sampleSeed, 42, 'sampleSeed');
     const warmupMode = options.warmupMode;
     const prefixTokens = safeParseInt(options.prefixTokens, 4096, 'prefixTokens');
     const cacheSeed = safeParseInt(options.cacheSeed, 42, 'cacheSeed');
@@ -221,9 +224,6 @@ program
         const dataDir = path.join(process.cwd(), 'data');
         sampleFiles = await scanSampleFiles(dataDir);
         sampleFiles = sampleFiles.filter(f => matchesSamplePattern(path.basename(f)));
-        if (cacheProbeEnabled) {
-          sampleFiles.sort();
-        }
         
         if ((sampleCount > 0 || cacheProbeEnabled) && sampleFiles.length === 0) {
           console.error(chalk.red('❌ 没有找到样本文件'));
@@ -269,7 +269,13 @@ program
     }
     
     // 创建输入生成器
-    const generateInputText = createInputGenerator(sampleCount, sampleFiles);
+    const sampleSelections = sampleCount > 0 && !cacheProbeEnabled
+      ? Array.from(
+        { length: samples },
+        (_, requestIndex) => selectSampleFiles(sampleFiles, sampleCount, requestIndex, sampleSeed)
+      )
+      : [];
+    const generateInputText = createInputGenerator(sampleCount, sampleFiles, sampleSeed);
     
     let units = null;
     let requestPlan = null;
@@ -333,7 +339,7 @@ program
     // 预估 token 数
     const sampleInput = cacheProbeEnabled
       ? requestPlan[0]?.text || ''
-      : await generateInputText();
+      : await generateInputText(0);
     const estimatedTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
     
     if (!quiet) {
@@ -353,7 +359,12 @@ program
           console.log(`  -n ${sampleCount} 已触发样本扫描；探针素材按完整匹配文件集构造`);
         }
       } else if (sampleCount > 0) {
-        console.log(`  每次随机抽取: ${sampleCount} 个样本`);
+        console.log(`  每次确定性选取: ${sampleCount} 个样本`);
+        console.log(`  样本 seed: ${sampleSeed}`);
+        console.log(`  匹配样本文件 (${sampleFiles.length}): ${sampleFiles.join(', ')}`);
+        for (const [requestIndex, selectedFiles] of sampleSelections.entries()) {
+          console.log(`  请求 #${requestIndex + 1} 素材: ${selectedFiles.join(', ')}`);
+        }
       } else {
         console.log(`  使用默认简单Prompt`);
       }
@@ -404,6 +415,9 @@ program
         concurrency,
         concurrencyMode,
         sampleCount,
+        sampleSeed,
+        sampleFiles,
+        sampleSelections: sampleSelections.map((files, requestIndex) => ({ requestIndex, files })),
         generateInputText,
         timeout,
         extraBody,
