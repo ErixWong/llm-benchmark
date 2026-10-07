@@ -28,6 +28,7 @@ npm run benchmark              # 等价于 node src/index.js
 | `src/index.js` | CLI 入口、参数解析、样本扫描 |
 | `src/llm-benchmark.js` | 压测执行核心：并发调度、流式解析、指标聚合、控制台输出 |
 | `src/token-stats.js` | 完成 token 口径（服务端 usage 优先，客户端 tokenizer 回退） |
+| `src/decode-stats.js` | 解码窗口并集吞吐与有效解码并发度纯函数 |
 | `src/extra-body.js` | `--extra-body` 解析与保留键保护 |
 | `src/context-generator.js` | 输入上下文生成与 token 计数 |
 | `src/http-client.js` | axios 实例：keep-alive、重试、超时、URL 规范化 |

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- 新增 `metrics.decodeWindowThroughputTps`（成功请求解码窗口并集口径）与
+  `metrics.effectiveDecodeConcurrency`（解码时长总和 ÷ 墙钟时间）；控制台、Markdown 与 HTML
+  展示新指标及吞吐关系提示，JSON `metricsVersion` 升至 `1.3`。仅新增字段，非 BREAKING。
 - `--bank <name>` / `BANK` 列表型题库：按 `tags.outputTier` 分层做 seeded 轮转，使用条目 prompt
   并记录题库摘要与逐请求 `bankItemId`；`--bank-items <ids>` 可按显式 ID 顺序复现选择。
   题库与 `-n N` 互斥，且暂不支持缓存探针。只新增可选报告字段，`METRICS_VERSION` 不变。

@@ -266,11 +266,12 @@ function jsonForScript(value) {
 
 /**
  * 指标口径版本：major 表示既有字段含义发生不兼容变更；minor 表示纯新增字段。
- * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
+ * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除旧解码吞吐定义
  * v1.1: 新增可选的 metrics.cache 缓存探针结果（含配对判定规则；该功能与其判定规则在同一未发布版本内定型）
  * v1.2: 新增通用 metrics.diagnostics
+ * v1.3: 新增解码期聚合吞吐与有效解码并发度
  */
-const METRICS_VERSION = 1.2;
+const METRICS_VERSION = 1.3;
 
 /**
  * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）
@@ -430,6 +431,12 @@ async function generateMarkdownReport(results, outputDir, baseName, reportTime) 
       lines.push(`| 最大 | ${tps.max.toFixed(2)} tokens/s |`);
     }
     lines.push(`| 整体吞吐（墙钟） | ${results.tokenSpeed.metrics.throughputTps ? results.tokenSpeed.metrics.throughputTps.toFixed(2) : '-'} tokens/s |`);
+    const decodeWindowThroughput = results.tokenSpeed.metrics.decodeWindowThroughputTps;
+    const effectiveConcurrency = results.tokenSpeed.metrics.effectiveDecodeConcurrency;
+    lines.push(`| 解码窗口并集吞吐 | ${decodeWindowThroughput == null ? '-' : `${decodeWindowThroughput.toFixed(2)} tokens/s`} |`);
+    lines.push(`| 有效解码并发度 | ${effectiveConcurrency == null ? '-' : effectiveConcurrency.toFixed(3)} |`);
+    lines.push('');
+    lines.push('> throughputTps = 平均单流 TPS × effectiveDecodeConcurrency；TTFT、排队与批次间隙期间请求在飞但不产 token。');
     if (shouldShowTpsWarning(results.tokenSpeed)) {
       lines.push('');
       lines.push('> ⚠️ 输出过短，TPS 不具意义');
@@ -1175,6 +1182,14 @@ function generateTokenSpeedHtml(results, chartData) {
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">整体吞吐 TPS (墙钟)</div>
               </div>
               <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #38a169;">${r.metrics.decodeWindowThroughputTps == null ? '-' : r.metrics.decodeWindowThroughputTps.toFixed(1)}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">解码窗口并集吞吐 TPS</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
+                <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${r.metrics.effectiveDecodeConcurrency == null ? '-' : r.metrics.effectiveDecodeConcurrency.toFixed(2)}</div>
+                <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">有效解码并发度</div>
+              </div>
+              <div class="metric-card" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 12px; text-align: center; transition: all 0.2s;">
                 <div class="metric-value" style="font-size: 24px; font-weight: 600; color: #805ad5;">${r.metrics.ttfo && r.metrics.ttfo.values && r.metrics.ttfo.values.length > 0 ? (r.metrics.ttfo.mean / 1000).toFixed(2) : '-'}<span style="font-size: 12px; color: #718096; margin-left: 2px;">s</span></div>
                 <div class="metric-label" style="font-size: 11px; color: #718096; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">平均 TTFO</div>
               </div>
@@ -1208,6 +1223,7 @@ function generateTokenSpeedHtml(results, chartData) {
               </div>
             </div>
           </div>
+          <p style="color: #718096; font-size: 12px; margin-top: 12px;">throughputTps = 平均单流 TPS × effectiveDecodeConcurrency；TTFT、排队与批次间隙期间请求在飞但不产 token。</p>
         </div>
       </div>
       
