@@ -621,6 +621,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
 
         resolve({
           success: true,
+          maxOutputTokens,
           totalRequestTime,
           ttft,
           ttfo,

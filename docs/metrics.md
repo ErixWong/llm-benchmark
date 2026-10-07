@@ -103,6 +103,8 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 | `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索 |
 | `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数 |
 
+`--prefix-tokens` 是客户端 tokenizer 口径的目标值，服务端实际 `prompt_tokens` 可能明显不同（不同 tokenizer 的实测差异可达 30%）；报告中的 `promptTokens` 一律以服务端 usage 为准。两种来源不可混算，沿用“不同来源不得相减”。
+
 口径规则：
 
 1. **缓存命中率只依据服务端 usage**。服务端没有提供可用的 prompt/缓存 token 数据时，

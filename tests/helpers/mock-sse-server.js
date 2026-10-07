@@ -19,7 +19,8 @@ function sleep(milliseconds) {
  *   prefixes?:string[],
  *   hitDelayMs?:number,
  *   missDelayMs?:number,
- *   generationDelayMs?:number
+ *   generationDelayMs?:number,
+ *   completionTokens?:number
  * }} options
  * @returns {Promise<{url:string,requests:Array<Object>,close:()=>Promise<void>}>}
  */
@@ -28,7 +29,8 @@ export async function createMockSseServer({
   prefixes = [],
   hitDelayMs = 5,
   missDelayMs = 60,
-  generationDelayMs = 3
+  generationDelayMs = 3,
+  completionTokens = 1
 } = {}) {
   if (!VALID_MODES.has(mode)) {
     throw new RangeError(`无效的 mock SSE 模式: ${mode}`);
@@ -75,7 +77,7 @@ export async function createMockSseServer({
           const promptTokens = Math.max(300, String(firstUserContent ?? '').length);
           const usage = {
             prompt_tokens: promptTokens,
-            completion_tokens: 1
+            completion_tokens: completionTokens
           };
           if (mode === 'cache-aware') {
             usage.prompt_tokens_details = {

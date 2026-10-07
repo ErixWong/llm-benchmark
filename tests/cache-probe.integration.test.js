@@ -42,14 +42,15 @@ function makeProbe() {
   };
 }
 
-async function runProbe(mode) {
+async function runProbe(mode, { maxOutputTokens = 4, completionTokens = 1 } = {}) {
   const probe = makeProbe();
   const server = await createMockSseServer({
     mode,
     prefixes: probe.units.map((unit) => unit.primed),
     hitDelayMs: 5,
     missDelayMs: 60,
-    generationDelayMs: 3
+    generationDelayMs: 3,
+    completionTokens
   });
   const consoleOutput = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -60,7 +61,7 @@ async function runProbe(mode) {
       samples: probe.requestPlan.length,
       concurrency: 1,
       concurrencyMode: 'batch',
-      maxOutputTokens: 4,
+      maxOutputTokens,
       timeout: 3000,
       retry: 0,
       requestPlan: probe.requestPlan,
@@ -152,6 +153,32 @@ describe('cache-probe integration', () => {
     expect(cache.verdict).toBe('benefit');
     expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(cache.responseCacheSuspected).toBe(0);
+  });
+
+  it('truncatedRequests 按 completion_tokens 是否触及 max_tokens 计数', async () => {
+    const truncatedRun = await runProbe('cache-aware', {
+      maxOutputTokens: 1,
+      completionTokens: 1
+    });
+    activeServer = truncatedRun.server;
+
+    expect(truncatedRun.results.raw.map((request) => request.outputTokens))
+      .toEqual(Array(truncatedRun.requestPlan.length).fill(1));
+    expect(truncatedRun.results.metrics.cache.truncatedRequests)
+      .toBe(truncatedRun.requestPlan.length);
+
+    await activeServer.close();
+    activeServer = null;
+
+    const completeRun = await runProbe('cache-aware', {
+      maxOutputTokens: 8,
+      completionTokens: 3
+    });
+    activeServer = completeRun.server;
+
+    expect(completeRun.results.raw.map((request) => request.outputTokens))
+      .toEqual(Array(completeRun.requestPlan.length).fill(3));
+    expect(completeRun.results.metrics.cache.truncatedRequests).toBe(0);
   });
 
   it('显式 cached_tokens: 0 时以服务端零命中为准，即使 warm TTFT 更低', async () => {
