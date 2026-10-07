@@ -75,6 +75,39 @@ function makeResults() {
   };
 }
 
+function makeCacheResults() {
+  const results = makeResults();
+  results.tokenSpeed.config.samples = 6;
+  results.tokenSpeed.config.units = [{
+    unitIndex: 0,
+    itemId: 'sample-1',
+    prefixHash: 'abcdef123456',
+    prefixTokens: 100
+  }];
+  results.tokenSpeed.config.prefixValidation = {
+    unique: { ok: true },
+    verified: 1
+  };
+  results.tokenSpeed.metrics.cache = {
+    cold: { n: 3, median: 120, min: 110, max: 130 },
+    warm: { n: 3, median: 20, min: 15, max: 25 },
+    ttftDeltaMs: 100,
+    ttftRatio: 6,
+    insufficientSamples: false,
+    server: {
+      cachedPromptTokens: 300,
+      promptTokens: 600,
+      tokenHitRate: 0.5,
+      requestsWithData: 6,
+      source: 'api'
+    },
+    verdict: 'benefit',
+    responseCacheSuspected: 0,
+    truncatedRequests: 0
+  };
+  return results;
+}
+
 async function readReport(dir) {
   const files = await fs.readdir(dir);
   const read = async (ext) => {
@@ -110,7 +143,7 @@ describe('reporter', () => {
 
   describe('JSON 报告', () => {
     it('写入 metricsVersion', () => {
-      expect(JSON.parse(report.json).metricsVersion).toBe(1);
+      expect(JSON.parse(report.json).metricsVersion).toBe(1.1);
     });
 
     it('默认剥离模型输出全文', () => {
@@ -129,6 +162,24 @@ describe('reporter', () => {
     it('不修改传入的结果对象（内存中仍保留文本）', () => {
       expect(fixture.tokenSpeed.raw[0].outputText).toContain(SECRET_VISIBLE);
       expect(fixture.tokenSpeed.raw[0].reasoningText).toContain(SECRET_REASONING);
+    });
+
+    it('保留缓存指标与配置中的前缀信息', async () => {
+      const results = makeCacheResults();
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-cache-'));
+      try {
+        await generateReport(results, dir);
+        const { json } = await readReport(dir);
+        const parsed = JSON.parse(json);
+        expect(parsed.tokenSpeed.metrics.cache.server.tokenHitRate).toBe(0.5);
+        expect(parsed.tokenSpeed.config.units[0]).toMatchObject({
+          prefixHash: 'abcdef123456',
+          prefixTokens: 100
+        });
+        expect(parsed.tokenSpeed.raw[0].outputText).toBeUndefined();
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -180,6 +231,54 @@ describe('reporter', () => {
     it('错误详情中的 HTML 被中和', () => {
       expect(report.md).not.toContain('</script><script>alert');
       expect(report.md).toContain('&lt;script&gt;alert(3)');
+    });
+
+    it('普通报告不添加缓存区块', () => {
+      expect(report.md).not.toContain('### 缓存命中');
+      expect(report.html).not.toContain('class="cache-probe"');
+    });
+
+    it('探针报告包含冷热统计、服务端覆盖率及前缀自检', async () => {
+      const results = makeCacheResults();
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-cache-'));
+      try {
+        await generateReport(results, dir);
+        const { md, html } = await readReport(dir);
+        expect(md).toContain('### 缓存命中');
+        expect(md).toContain('120 ms（n=3）');
+        expect(md).toContain('20 ms（n=3）');
+        expect(md).toContain('冷-热 TTFT 差值（中位数之差）');
+        expect(md).toContain('6.00×');
+        expect(md).toContain('观察到缓存收益');
+        expect(md).toContain('50.00%');
+        expect(md).toContain('6/6');
+        expect(md).toContain('唯一性 通过；预热前缀匹配 1/1');
+        expect(md).not.toContain('prefill 耗时');
+        expect(html).toContain('class="card cache-probe"');
+        expect(html).toContain('服务端 token 命中率');
+        expect(html).toContain('唯一性 通过；预热前缀匹配 1/1');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('服务端未报告缓存字段或样本不足时写明结论限制', async () => {
+      const results = makeCacheResults();
+      results.tokenSpeed.metrics.cache.server = null;
+      results.tokenSpeed.metrics.cache.insufficientSamples = true;
+      results.tokenSpeed.metrics.cache.verdict = 'inconclusive';
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-cache-'));
+      try {
+        await generateReport(results, dir);
+        const { md, html } = await readReport(dir);
+        expect(md).toContain('服务端未上报缓存字段，结论依据为冷/热行为对比');
+        expect(md).toContain('样本不足，不做结论');
+        expect(md).toContain('结论不确定');
+        expect(html).toContain('服务端未上报缓存字段，结论依据为冷/热行为对比');
+        expect(html).toContain('样本不足，不做结论');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
     });
   });
 });
