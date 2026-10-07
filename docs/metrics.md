@@ -48,6 +48,7 @@ JSON 报告顶层的 `metricsVersion` 标识口径版本：
 
 | 版本 | 含义 |
 |------|------|
+| 2.0 | 缓存 `verdict` 改用配对 TTFT 证据；新增配对统计与 `reason` |
 | 1.1 | 新增可选的 `metrics.cache` 缓存探针结果；既有指标字段的含义不变 |
 | 1.0 | `ttft` = 首个生成 token（含 reasoning）；新增 `ttfo`、`tokenSource`；移除 `decodeThroughputTps` |
 | 无该字段 | 旧口径：`ttft` 只统计 content token。**与新数据不可直接对比** |
@@ -94,12 +95,15 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 
 | 字段 | 含义 |
 |------|------|
-| `cold` / `warm` | 两组成功请求的 TTFT 分布摘要：`n`、`median`、`mean`、`min`、`max`；以中位数作为主要比较值，同时报告样本数和范围 |
-| `ttftDeltaMs` | `cold.median - warm.median`；正数表示 warm 组中位 TTFT 较低 |
-| `ttftRatio` | `cold.median / warm.median`；warm 中位数为 0 或数据不足时为 `null` |
-| `insufficientSamples` | cold 或 warm 任一组的有效 TTFT 样本数少于 3 |
+| `cold` / `warm` | 两组成功请求的 TTFT 分布摘要：`n`、`median`、`mean`、`min`、`max`；中位数与范围用于描述各组分布 |
+| `pairDeltas` | 按单元顺序的 `warm_i - cold_i`（毫秒）；只包含配对两侧都有有限 TTFT 的单元，负数表示该对 warm 更快 |
+| `pairsTotal` / `pairsFavorable` / `pairsUnfavorable` / `pairsTied` | 有效配对总数，以及差值分别小于、大于、等于 0 的配对数 |
+| `pairedMedianDeltaMs` | `pairDeltas` 的中位数；没有有效配对时为 `null` |
+| `ttftDeltaMs` | `cold.median - warm.median`；正数表示 warm 组中位 TTFT 较低，仅作参考，不参与判定 |
+| `ttftRatio` | `cold.median / warm.median`；warm 中位数为 0 或数据不足时为 `null`，仅作参考 |
+| `insufficientSamples` | cold / warm 任一组有效 TTFT 样本数少于 3，或有效配对少于 3 |
 | `server` | 服务端缓存 usage 汇总；可含 `cachedPromptTokens`、`promptTokens`、`tokenHitRate`、`requestsWithData` 与 `source: "api"`；无可用服务端数据时为 `null` |
-| `verdict` | `benefit`、`no-benefit` 或 `inconclusive`，按下方规则产生 |
+| `verdict` / `reason` | 配对证据判定及对应原因码，按下方规则产生 |
 | `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索 |
 | `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数 |
 
@@ -112,18 +116,35 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
    服务端报告 `usage` 但**不含任何缓存字段**时，缓存命中率是 unknown（`server: null`），
    不能按 0 处理——“没有上报”与“上报了 0 命中”是两回事。只有服务端**显式**返回
    `cached_tokens: 0`（或等价字段为 0）时，才按 0 汇总并给出 `tokenHitRate: 0`。
-2. `ttftDeltaMs` 只是两组 TTFT **中位数之差**，不是 prefill 耗时。warm 组 TTFT 仍包含排队、
-   prefill（如未命中）和首个 decode step；两组还都包含网络往返。
-3. 主要比较值用中位数，并同时看 `n`、`min`、`max`。任一组有效样本少于 3 时标记
-   `insufficientSamples: true`，判定为不确定；不设置固定的毫秒差或倍数验收阈值。
-4. 命中率只在同一服务端数据源、同一 token 口径内计算（缓存 prompt token 总数 ÷ prompt token
+2. 配对规则遵循 `buildRequestPlan` 契约：成功请求按 `cacheIntent` 分为 miss / hit 两组，
+   各自按 `requestIndex` 升序排列后，第 i 个 miss 与第 i 个 hit 配成一对。只把两侧 TTFT
+   都是有限数值的配对计入 `pairDeltas`；差值定义为 `warm_i - cold_i`。
+3. **判定使用配对差值，而不是冷热组中位数比较**：探针是配对实验，每个单元的 cold/warm
+   除 nonce 外共享相同前缀和内容；`warm_i - cold_i` 可抵消服务器随时间发生的性能漂移。
+   **逐对差值符号不一致时不下收益结论**。`ttftDeltaMs` / `ttftRatio` 仍保留作分布参考，
+   不参与 verdict 判定。TTFT 包含排队、prefill（如未命中）、首个 decode step 和网络往返，
+   不是 prefill 耗时；不设置固定的毫秒差或倍数验收阈值。
+4. `verdict` 按以下顺序产生：
+   - 任一冷热组有效 TTFT 样本数少于 3，或 `pairsTotal < 3`：`inconclusive`，
+    `reason: "insufficient-samples"`。
+   - 服务端非 null、`requestsWithData > 0` 且 `tokenHitRate === 0`：
+    `no-benefit`，`reason: "server-reports-zero"`。
+   - `pairsUnfavorable === 0`、`pairsTotal > 0` 且 `pairedMedianDeltaMs < 0`：
+    `benefit`，`reason: "consistent-benefit"`。
+   - 其余情况，若服务端有数据且 `tokenHitRate > 0`：`inconclusive`，
+    `reason: "inconsistent-pair-deltas"`；否则为 `no-benefit`，
+    `reason: "no-consistent-benefit"`。
+5. `reason` 取值表：
+
+   | `reason` | 含义 |
+   |----------|------|
+   | `insufficient-samples` | 冷热组有效 TTFT 样本或有效配对不足 3 |
+   | `server-reports-zero` | 服务端有完整数据且明确报告零缓存命中 |
+   | `consistent-benefit` | 配对差值没有反向配对，且其中位数为负 |
+   | `inconsistent-pair-deltas` | 服务端报告命中，但配对证据不一致，不能确认收益 |
+   | `no-consistent-benefit` | 没有服务端正命中证据，也没有一致的配对收益 |
+6. 命中率只在同一服务端数据源、同一 token 口径内计算（缓存 prompt token 总数 ÷ prompt token
    总数）。沿用“不同来源不得相减”的规则，不把客户端估算值与服务端 usage 混算。
-5. `verdict` 规则：
-   - 样本不足时为 `inconclusive`。
-   - 有服务端缓存数据且命中率为 0 时为 `no-benefit`；命中率大于 0 且 warm 中位 TTFT
-     低于 cold 时为 `benefit`；否则为 `inconclusive`。
-   - 没有服务端缓存数据时，只用冷热 TTFT 行为作有限结论：warm 中位数更低为 `benefit`，
-     否则为 `no-benefit`。此时结论不代表服务端确认了缓存命中。
 
 测量前置条件与陷阱：
 
@@ -133,6 +154,13 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
   cold 请求仍以前面共享内容开头，可能意外命中。
 - **前缀预热必须串行**：同一待测前缀的并发预热可能形成惊群，多个请求同时首次到达时都会 miss。
   本工具的 prefix 预热按单元串行执行，并在计时请求之前完成。
+- **模型预热不替代前缀预热**：探针使用 `--warmup-mode model` 时先发送唯一 nonce 的模型/JIT
+  预热请求，然后仍会串行 priming 所有待测前缀；探针不能使用 `--warmup-mode none`。
+- **服务器性能漂移**：请求越晚越慢等时变因素会污染两组 TTFT 中位数比较。一次 vLLM 实测中
+  `prefix_cache_hits_total` 增量为 0，但 cold 为 `[772, 1686, 2202] ms`、warm 为
+  `[760, 986, 2707] ms`；组中位数分别为 `1686 ms` / `986 ms`，旧规则会误判收益。
+  配对差值实际为 `[-12, -700, +505] ms`（2 对有利、1 对反向），符号不一致，因此新规则
+  不判定收益。配对差值可抵消部分共同漂移，但不会消除所有噪声。
 - **缓存按 block 粒度工作**：例如 vLLM 默认 block size 为 16 tokens，实际命中 token 数会按 block
   向下取整；短前缀或 block 边界附近的差异可能看起来不像逐 token 精确匹配。
 - **并发会产生淘汰**：并发大于 1 时，cold 组的大前缀可能挤掉已预热的 warm 前缀。

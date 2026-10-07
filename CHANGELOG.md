@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **BREAKING（缓存探针判定口径）**: 缓存 `verdict` 改为根据按单元配对的 TTFT 差值判定，
+  不再比较 cold / warm 两组中位数；新增配对摘要与 `reason` 原因码，旧版 verdict 不可直接对比。
+  JSON `metricsVersion` 更新为 `2.0`。详见 `docs/metrics.md`
+- `--cache-probe --warmup-mode model` 现在先做唯一 nonce 的模型/JIT 预热，再串行预热测量前缀；
+  探针下 `--warmup-mode none` 会报错，非探针的 `none` 仍表示跳过预热
 - **BREAKING（指标口径）**: `ttft` 现在取**首个生成 token**，包含 reasoning token。
   与 NVIDIA AIPerf / Artificial Analysis / vLLM 定义一致；修复推理模型下
   TPS 分子（含 reasoning）与分母（从 content 起算）口径不一致导致的 TPS 高估。

@@ -40,7 +40,7 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `--system-prompt <prompt>` | — | 无 | 自定义 system prompt |
 | `--extra-body <json>` | `EXTRA_BODY` | 空 | 透传服务端特有参数，见下文 |
 | `--cache-probe` | `CACHE_PROBE` | `false` | 启用冷/热缓存探针；每个单元先预热前缀，再发 cold/warm 请求 |
-| `--warmup-mode <mode>` | `WARMUP_MODE` | `auto` | `auto`（探针时等同 `prefix`）/ `prefix` / `model` / `none` |
+| `--warmup-mode <mode>` | `WARMUP_MODE` | `auto` | `auto`（探针时等同 `prefix`）/ `prefix` / `model` / `none`（仅非探针） |
 | `--prefix-tokens <number>` | `PREFIX_TOKENS` | `4096` | 每个缓存探针单元的目标前缀 token 数 |
 | `--cache-suffix <text>` | — | 固定总结提示 | 冷/热请求共用的追加后缀 |
 | `--cache-seed <number>` | `CACHE_SEED` | `42` | 确定性轮转探针素材的起点 |
@@ -56,7 +56,7 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 - **URL 自动补全**：`https://x/v1` → `https://x/v1/chat/completions`；`https://x` → `https://x/v1/chat/completions`；已含完整路径则原样使用
 - **重试**：最多 3 次，指数退避 1s → 2s → 4s；仅针对 `408/429/500/502/503/504` 与连接类错误；`429` 尊重 `Retry-After`
 - **预热**：正式计时前发 1 次预热请求，不计入任何指标；预热收到 4xx/5xx 会直接终止
-- **缓存探针**：每个探针单元先串行预热一个固定前缀，再以不同 nonce 成对发送 cold/warm；`--warmup-mode model` 只预热模型/JIT、不预热待测前缀
+- **缓存探针**：每个探针单元先串行预热一个固定前缀，再以不同 nonce 成对发送 cold/warm；`--warmup-mode model` 会先用唯一 nonce 预热模型/JIT，再串行预热待测前缀；探针不允许 `none`（非探针下 `none` 表示不预热）
 - **Token 计数**：默认携带 `stream_options.include_usage` 以获取服务端精确计数；端点不支持时按报错提示关闭（见 `docs/metrics.md`）
 
 ## 环境变量
@@ -84,7 +84,12 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `ttfo` | 到首个**可见答案 token**的时延 |
 | `tps` | 单请求解码速度（不含 TTFT） |
 | `throughputTps` | 系统级吞吐：总输出 token ÷ 墙钟时间 |
-| `cache` | 仅在 `--cache-probe` 时出现：冷/热 TTFT、服务端上报的缓存 token 命中率与判定 |
+| `cache` | 仅在 `--cache-probe` 时出现：冷/热 TTFT、逐单元配对差值、服务端上报的缓存 token 命中率与判定 |
+
+### 指标口径
+
+缓存 verdict 以成对的 `warm_i - cold_i` TTFT 差值判定，`ttftDeltaMs`（冷热组中位数之差）
+与 `ttftRatio` 仅作参考；原因码见 [`docs/metrics.md`](docs/metrics.md#缓存命中)。
 
 **定义依据、口径版本（`metricsVersion`）、token 计数来源、并发饱和怎么判读** ——
 全部在 [`docs/metrics.md`](docs/metrics.md)。
@@ -132,7 +137,7 @@ node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":
 | 最差批次表现 | `--concurrency-mode batch` |
 | 大上下文输入 | `-n 2`（每次随机拼 2 个样本） |
 | 冷/热缓存对比 | `node src/index.js --cache-probe --warmup-mode prefix -c 1 -r 3 --prefix-tokens 4096` |
-| 干净冷态对比 | `node src/index.js --cache-probe --warmup-mode model -c 1 -r 3`（只预热模型/JIT，不预热待测前缀） |
+| 模型预热后的缓存对比 | `node src/index.js --cache-probe --warmup-mode model -c 1 -r 3`（先预热模型/JIT，再串行 priming 待测前缀） |
 | 干净测量、不重试 | `node src/index.js --cache-probe --retry 0 -c 1 -r 3` |
 
 > 固定输入反复压同一服务端会命中前缀缓存导致吞吐虚高；需要干净数据时换输入或清服务端缓存。
