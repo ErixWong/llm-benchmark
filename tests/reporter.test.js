@@ -266,6 +266,8 @@ describe('reporter', () => {
       expect(report.md).toContain('TTFO');
       expect(report.md).toContain('Token 计数来源');
       expect(report.md).toContain('TTFT 到首个生成 token（含 reasoning）；TTFO 到首个可见内容。');
+      expect(report.html).toContain('TTFT</b> = 到首个生成 token（含 reasoning）');
+      expect(report.html).toContain('TTFO</b> = 到首个可见内容');
       expect(report.md).not.toContain('解码总吞吐');
     });
 

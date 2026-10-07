@@ -319,6 +319,10 @@ describe('cache-probe integration', () => {
       .toEqual(Array(truncatedRun.requestPlan.length).fill(1));
     expect(truncatedRun.results.metrics.cache.truncatedRequests)
       .toBe(truncatedRun.requestPlan.length);
+    expect(truncatedRun.results.metrics.diagnostics.truncatedRequests)
+      .toBe(truncatedRun.results.metrics.cache.truncatedRequests);
+    expect(truncatedRun.results.metrics.diagnostics.responseCacheSuspected)
+      .toBe(truncatedRun.results.metrics.cache.responseCacheSuspected);
     expect(truncatedRun.consoleText).toContain(
       `⚠️ ${truncatedRun.requestPlan.length} 条请求输出被 max_tokens 截断`
     );
@@ -335,6 +339,10 @@ describe('cache-probe integration', () => {
     expect(completeRun.results.raw.map((request) => request.outputTokens))
       .toEqual(Array(completeRun.requestPlan.length).fill(3));
     expect(completeRun.results.metrics.cache.truncatedRequests).toBe(0);
+    expect(completeRun.results.metrics.diagnostics.truncatedRequests)
+      .toBe(completeRun.results.metrics.cache.truncatedRequests);
+    expect(completeRun.results.metrics.diagnostics.responseCacheSuspected)
+      .toBe(completeRun.results.metrics.cache.responseCacheSuspected);
     expect(completeRun.consoleText).not.toContain('输出被 max_tokens 截断');
     expect(completeRun.consoleText).not.toContain('疑似响应级缓存');
   });
