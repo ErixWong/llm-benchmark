@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--cache-probe` 冷/热缓存探针：串行预热前缀、交错测量 cold/warm，并在 `metrics.cache`
   与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要；缓存 `verdict`
   根据按单元配对的 TTFT 差值判定，而非冷热组中位数，并提供配对摘要与 `reason` 原因码。
-  既有字段语义与默认行为不变；`raw[]` 新增可选字段 `maxOutputTokens`、
+  探针报告配置新增素材库来源与整体指纹；既有字段语义与默认行为不变；`raw[]` 新增可选字段
+  `promptTokens`、`maxOutputTokens`、
   `cachedPromptTokens`、`cacheSource`、`hasUsage`、`retries`，探针请求还记录
   `cacheIntent` / `cacheUnitIndex`。JSON 报告 `metricsVersion` 从 `1` 变为 `1.1`，
   仅为向后兼容的新增字段，非 BREAKING。详见 `docs/metrics.md`

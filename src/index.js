@@ -14,7 +14,7 @@ import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
-import { buildMaterial } from './cache-source.js';
+import { buildMaterial, hashMaterialBank } from './cache-source.js';
 import {
   buildProbeUnits,
   evaluateProbePreflight,
@@ -297,6 +297,7 @@ program
             tokens: material.tokens
           });
         }
+        const bankHash = hashMaterialBank(fileContents.map((text) => ({ text })));
 
         runSalt = makeRunSalt();
         units = buildProbeUnits({
@@ -320,6 +321,7 @@ program
           warmupMode: warmupMode === 'auto' ? 'prefix' : warmupMode,
           order: 'cold-warm',
           runSalt,
+          bank: { name: 'chunked-samples', hash: bankHash },
           prefixValidation: probeSelfCheck
         };
       } catch (error) {

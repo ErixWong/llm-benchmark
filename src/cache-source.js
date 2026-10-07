@@ -20,6 +20,15 @@ export function hashText(text) {
 }
 
 /**
+ * 对按稳定顺序排列的素材文本生成整体指纹。
+ * @param {{text:string}[]} materials - 素材文本
+ * @returns {string} 12 位十六进制摘要
+ */
+export function hashMaterialBank(materials) {
+  return hashText(materials.map((material) => material.text).join('\u0000'));
+}
+
+/**
  * 按 Markdown 二级与三级标题切分文本，并保留所有原始字符。
  * @param {string} text - Markdown 文本
  * @returns {{heading:string, text:string}[]} 按原顺序排列的文本块
@@ -119,6 +128,7 @@ export function buildMaterial({ documents, targetTokens }) {
 export default {
   countTokens,
   hashText,
+  hashMaterialBank,
   chunkByHeadings,
   buildMaterial
 };

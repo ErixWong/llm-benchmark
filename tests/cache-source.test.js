@@ -3,6 +3,7 @@ import {
   buildMaterial,
   chunkByHeadings,
   countTokens,
+  hashMaterialBank,
   hashText
 } from '../src/cache-source.js';
 
@@ -24,6 +25,21 @@ describe('cache-source', () => {
       expect(hashText('abc')).toBe('ba7816bf8f01');
       expect(hashText('')).toBe('e3b0c44298fc');
       expect(hashText('abc')).not.toBe(hashText('abd'));
+    });
+  });
+
+  describe('hashMaterialBank', () => {
+    it('is stable for identical material text and changes when any text changes', () => {
+      const materials = [
+        { text: 'first source text' },
+        { text: 'second source text' }
+      ];
+
+      expect(hashMaterialBank(materials)).toBe(hashMaterialBank(materials));
+      expect(hashMaterialBank(materials)).not.toBe(hashMaterialBank([
+        materials[0],
+        { text: 'second source texT' }
+      ]));
     });
   });
 

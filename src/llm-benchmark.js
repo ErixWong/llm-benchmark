@@ -475,6 +475,7 @@ export async function runLlmBenchmarkTest(options) {
       prefixTokens,
       suffix: cacheProbe.suffix,
       order: cacheProbe.order,
+      ...(cacheProbe.bank ? { bank: cacheProbe.bank } : {}),
       units: cacheProbe.units.map(unit => ({
         unitIndex: unit.unitIndex,
         itemId: unit.itemId,
