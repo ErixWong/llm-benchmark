@@ -104,9 +104,38 @@ export function checkUniquePrefixes(units = []) {
   return { ok: duplicates.length === 0, duplicates };
 }
 
+/**
+ * 汇总缓存探针前缀自检结果。
+ * @param {Array<Object>} units - 待检查的探测单元
+ * @returns {{ok:boolean,unique:Object,verified:number,total:number,errors:string[]}}
+ */
+export function evaluateProbePreflight(units = []) {
+  const unique = checkUniquePrefixes(units);
+  const prefixChecks = units.map((unit) => verifyPrefix(unit?.primed, unit?.warm));
+  const verified = prefixChecks.filter((check) => check.ok).length;
+  const errors = [];
+
+  if (!unique.ok) {
+    errors.push(`前缀不唯一（重复项 ${unique.duplicates.length} 个）`);
+  }
+  const failedChecks = prefixChecks.filter((check) => !check.ok);
+  if (failedChecks.length > 0) {
+    errors.push(`热请求前缀匹配失败 ${failedChecks.length}/${units.length}`);
+  }
+
+  return {
+    ok: unique.ok && verified === units.length,
+    unique,
+    verified,
+    total: units.length,
+    errors
+  };
+}
+
 export default {
   makeRunSalt,
   buildProbeUnits,
   verifyPrefix,
-  checkUniquePrefixes
+  checkUniquePrefixes,
+  evaluateProbePreflight
 };

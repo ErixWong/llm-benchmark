@@ -15,7 +15,11 @@ import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
 import { buildMaterial } from './cache-source.js';
-import { buildProbeUnits, checkUniquePrefixes, makeRunSalt, verifyPrefix } from './cache-probe.js';
+import {
+  buildProbeUnits,
+  evaluateProbePreflight,
+  makeRunSalt
+} from './cache-probe.js';
 import { buildRequestPlan, selectDocuments } from './cache-plan.js';
 
 // 加载环境变量
@@ -300,23 +304,11 @@ program
           suffix: options.cacheSuffix,
           runSalt
         });
-        const uniqueCheck = checkUniquePrefixes(units);
-        const prefixChecks = units.map(unit => verifyPrefix(unit.primed, unit.warm));
-        const verified = prefixChecks.filter(check => check.ok).length;
-        probeSelfCheck = {
-          unique: uniqueCheck,
-          verified,
-          total: units.length,
-          ok: uniqueCheck.ok && verified === units.length
-        };
+        probeSelfCheck = evaluateProbePreflight(units);
         if (!probeSelfCheck.ok) {
           console.error(chalk.red('❌ 缓存探针前缀自检失败'));
-          if (!uniqueCheck.ok) {
-            console.error(chalk.red(`  前缀不唯一（重复项 ${uniqueCheck.duplicates.length} 个）`));
-          }
-          const failedChecks = prefixChecks.filter(check => !check.ok);
-          if (failedChecks.length > 0) {
-            console.error(chalk.red(`  热请求前缀匹配失败 ${failedChecks.length}/${units.length}`));
+          for (const error of probeSelfCheck.errors) {
+            console.error(chalk.red(`  ${error}`));
           }
           process.exit(1);
         }

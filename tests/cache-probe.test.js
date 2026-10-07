@@ -3,6 +3,7 @@ import { countTokens, hashText } from '../src/cache-source.js';
 import {
   buildProbeUnits,
   checkUniquePrefixes,
+  evaluateProbePreflight,
   makeRunSalt,
   verifyPrefix
 } from '../src/cache-probe.js';
@@ -99,6 +100,39 @@ describe('cache-probe', () => {
       const units = buildProbeUnits({ materials, suffix, runSalt: 'abcd' });
 
       expect(checkUniquePrefixes(units)).toEqual({ ok: true, duplicates: [] });
+    });
+
+    describe('evaluateProbePreflight', () => {
+      it('passes unique units whose warm text starts with the primed prefix', () => {
+        const units = buildProbeUnits({ materials, suffix, runSalt: 'abcd' });
+
+        expect(evaluateProbePreflight(units)).toEqual({
+          ok: true,
+          unique: { ok: true, duplicates: [] },
+          verified: 2,
+          total: 2,
+          errors: []
+        });
+      });
+
+      it('fails duplicate nonce units and reports the preflight errors', () => {
+        const repeatedUnit = {
+          primed: 'primed',
+          warm: 'warm',
+          cold: 'cold'
+        };
+
+        const result = evaluateProbePreflight([repeatedUnit, repeatedUnit]);
+
+        expect(result.ok).toBe(false);
+        expect(result.unique.ok).toBe(false);
+        expect(result.verified).toBe(0);
+        expect(result.total).toBe(2);
+        expect(result.errors).toEqual([
+          '前缀不唯一（重复项 3 个）',
+          '热请求前缀匹配失败 2/2'
+        ]);
+      });
     });
 
     it('reports repeated prefixes once in stable encounter order', () => {
