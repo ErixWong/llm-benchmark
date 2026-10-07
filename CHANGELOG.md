@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- `--bank <name>` / `BANK` 列表型题库：按 `tags.outputTier` 分层做 seeded 轮转，使用条目 prompt
+  并记录题库摘要与逐请求 `bankItemId`；`--bank-items <ids>` 可按显式 ID 顺序复现选择。
+  题库与 `-n N` 互斥，且暂不支持缓存探针。只新增可选报告字段，`METRICS_VERSION` 不变。
 - JSON 报告新增始终存在的 `metrics.diagnostics`，统一记录所有运行模式的截断与疑似响应级缓存诊断；
   `metrics.cache` 中的既有诊断字段保留且与通用字段数值一致。`metricsVersion` 升至 `1.2`
   （仅新增字段，非 BREAKING）。Markdown 配置表补充 API URL、超时、样本数、`--extra-body`

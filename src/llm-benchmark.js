@@ -43,6 +43,8 @@ export async function runLlmBenchmarkTest(options) {
     sampleSeed = 42,
     sampleFiles = [],
     sampleSelections = [],
+    bank = null,
+    bankItemIds = [],
     timeout = getDefaultTimeout(),  // 请求超时时间（毫秒）
     extraBody = null,  // 附加请求体参数（如 chat_template_kwargs）
     quiet = false,  // 静默模式
@@ -281,7 +283,8 @@ export async function runLlmBenchmarkTest(options) {
       return {
         messages: [{ role: 'user', content: text }],
         intent: undefined,
-        unitIndex: undefined
+        unitIndex: undefined,
+        bankItemId: bankItemIds[requestIndex]
       };
     }
     return {
@@ -305,7 +308,7 @@ export async function runLlmBenchmarkTest(options) {
     
     const runRequest = async (requestIndex) => {
       const requestSendTime = Date.now();
-      const { messages, intent, unitIndex } = await getMessagesForRequest(requestIndex);
+      const { messages, intent, unitIndex, bankItemId } = await getMessagesForRequest(requestIndex);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -320,6 +323,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex,
           requestSendTime,
           responseReceiveTime: Date.now(),
+          ...(bankItemId ? { bankItemId } : {}),
           ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         };
       } catch (error) {
@@ -335,6 +339,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex,
           requestSendTime,
           responseReceiveTime: Date.now(),
+          ...(bankItemId ? { bankItemId } : {}),
           ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         };
       }
@@ -387,7 +392,7 @@ export async function runLlmBenchmarkTest(options) {
         
         batchPromises.push(
           (async () => {
-            const { messages, intent, unitIndex } = await getMessagesForRequest(currentRequestIndex);
+            const { messages, intent, unitIndex, bankItemId } = await getMessagesForRequest(currentRequestIndex);
             try {
               const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
               completed++;
@@ -400,6 +405,7 @@ export async function runLlmBenchmarkTest(options) {
                 requestIndex: currentRequestIndex,
                 requestSendTime,
                 responseReceiveTime: Date.now(),
+                ...(bankItemId ? { bankItemId } : {}),
                 ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
               };
             } catch (error) {
@@ -414,6 +420,7 @@ export async function runLlmBenchmarkTest(options) {
                 requestIndex: currentRequestIndex,
                 requestSendTime,
                 responseReceiveTime: Date.now(),
+                ...(bankItemId ? { bankItemId } : {}),
                 ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
               };
             }
@@ -429,7 +436,7 @@ export async function runLlmBenchmarkTest(options) {
     for (let i = 0; i < samples; i++) {
       spinner.text = `执行Token速度测试 (${i + 1}/${samples})`;
       const requestSendTime = Date.now();
-      const { messages, intent, unitIndex } = await getMessagesForRequest(i);
+      const { messages, intent, unitIndex, bankItemId } = await getMessagesForRequest(i);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -441,6 +448,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex: i,
           requestSendTime,
           responseReceiveTime: Date.now(),
+          ...(bankItemId ? { bankItemId } : {}),
           ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         });
       } catch (error) {
@@ -452,6 +460,7 @@ export async function runLlmBenchmarkTest(options) {
           requestIndex: i,
           requestSendTime,
           responseReceiveTime: Date.now(),
+          ...(bankItemId ? { bankItemId } : {}),
           ...(intent ? { cacheIntent: intent, cacheUnitIndex: unitIndex } : {})
         });
       }
@@ -466,7 +475,7 @@ export async function runLlmBenchmarkTest(options) {
     model,  // 添加模型名称
     url,    // 添加API URL
     inputTokens: actualTokens,  // 使用实际计算的token数
-    inputTextUsed: !!(inputText || inputTexts || requestPlan),  // 标记是否使用了输入文本
+    inputTextUsed: !!(inputText || inputTexts || requestPlan || bank),  // 标记是否使用了输入文本
     maxOutputTokens,
     concurrency,
     concurrencyMode,
@@ -480,6 +489,7 @@ export async function runLlmBenchmarkTest(options) {
       sampleFiles,
       sampleSelections
     } : {}),
+    ...(!cacheProbe && bank ? { bank } : {}),
     uniqueInputs: requestPlan
       ? new Set(requestPlan.map(request => request.text)).size
       : contextMessagesList.length,  // 记录不同输入的数量

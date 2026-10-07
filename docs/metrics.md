@@ -132,9 +132,10 @@ API URL、`-n` 样本数，以及探针单元数、目标前缀长度、`warmupM
 | `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索，非零时控制台与 Markdown / HTML 报告显示警告 |
 | `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数；非零时控制台与 Markdown / HTML 报告显示警告 |
 
-JSON 报告 `tokenSpeed.config.bank` 记录探针素材库来源与整体指纹：`name` 为素材库类型，
-`hash` 是按稳定文件顺序对完整素材文本（不含运行 nonce / runSalt）计算的 12 位 SHA-256
-摘要，用于识别素材文本变化。
+JSON 报告 `tokenSpeed.config.bank` 在题库模式记录题库摘要：`name`、`version`、12 位 SHA-256
+内容指纹 `hash` 与题库总条目数 `itemCount`。题库指纹覆盖已解析 JSON 内容（不含派生的 `hash` 字段）。
+缓存探针仍沿用其既有 bank 摘要（`name` 与 `hash`）；其 hash 按稳定文件顺序对完整素材文本
+（不含运行 nonce / runSalt）计算。
 
 JSON 报告 `tokenSpeed.config` 还记录**输入素材的可复现性**：`sampleSeed`（`--sample-seed`，默认 42）、
 `sampleFiles`（排序后的候选文件）与 `sampleSelections`（逐请求选中的文件）。相同素材集 + 相同 seed
@@ -156,6 +157,11 @@ JSON 报告的 `raw[]` 新增以下可选逐请求诊断字段（旧报告可能
 | `cacheSource` | `api` 表示存在有效的服务端缓存字段；服务端未上报或字段无效时为 `unknown` |
 | `hasUsage` | 服务端是否返回 usage；未返回时为 `false` |
 | `retries` | 本请求实际发生的客户端重试次数 |
+| `bankItemId` | 题库模式下本请求使用的条目 ID；非题库模式下该字段不写入 JSON（缺省），以保持旧报告内容不变 |
+
+题库模式的 `config.bank` 结构为 `{name, version, hash, itemCount}`。`raw[].bankItemId` 指向本次请求
+prompt 来源的题库条目；显式 `--bank-items` 选择时同样记录实际分配的 ID。无题库模式下不序列化
+`bankItemId`，而不是写 `null`。
 
 口径规则：
 

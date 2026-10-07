@@ -394,6 +394,11 @@ async function generateMarkdownReport(results, outputDir, baseName, reportTime) 
     if (config.sampleCount > 0) {
       lines.push(`| Sample说明 | 每次请求随机抽取 ${config.sampleCount} 个样本 |`);
     }
+    if (config.bank?.itemCount !== undefined) {
+      lines.push(`| 题库 | ${escapeMarkdownTableCell(
+        `${config.bank.name} v${config.bank.version}（${config.bank.itemCount} 条，hash ${config.bank.hash}）`
+      )} |`);
+    }
     lines.push(`| --extra-body | ${config.extraBody && Object.keys(config.extraBody).length > 0
       ? escapeMarkdownTableCell(JSON.stringify(redactSensitiveFields(config.extraBody)))
       : '无'} |`);
@@ -1152,6 +1157,7 @@ function generateTokenSpeedHtml(results, chartData) {
               <tr><td style="border-bottom: 1px solid #edf2f7;">API URL</td><td style="font-size: 11px; word-break: break-all; border-bottom: 1px solid #edf2f7;">${escapeHtml(sanitizeReportUrl(r.config.url)) || 'N/A'}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">模型</td><td style="border-bottom: 1px solid #edf2f7;"><span style="color: #3182ce; font-weight: 500;">${escapeHtml(r.config.model) || 'N/A'}</span></td></tr>
               ${r.config.sampleCount > 0 ? `<tr><td style="border-bottom: 1px solid #edf2f7;">Sample数量</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.sampleCount} 个 (每个约 8k tokens)</td></tr>` : ''}
+              ${r.config.bank?.itemCount !== undefined ? `<tr><td style="border-bottom: 1px solid #edf2f7;">题库</td><td style="border-bottom: 1px solid #edf2f7;">${escapeHtml(`${r.config.bank.name} v${r.config.bank.version}（${r.config.bank.itemCount} 条，hash ${r.config.bank.hash}）`)}</td></tr>` : ''}
               <tr><td style="border-bottom: 1px solid #edf2f7;">最大输出Token数</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.maxOutputTokens}</td></tr>
               <tr><td style="border-bottom: 1px solid #edf2f7;">并发模式</td><td style="border-bottom: 1px solid #edf2f7;">${r.config.concurrencyMode === 'pipeline' ? '流水线' : '批次'}</td></tr>
               <tr><td>总测试时间</td><td><strong style="color: #2d3748;">${totalTimeStr}</strong></td></tr>

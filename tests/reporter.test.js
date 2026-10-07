@@ -180,6 +180,12 @@ describe('reporter', () => {
       }
     });
 
+    it('没有题库时不序列化 bank 字段，保持既有报告结构', () => {
+      const parsed = JSON.parse(report.json);
+      expect(Object.hasOwn(parsed.tokenSpeed.config, 'bank')).toBe(false);
+      expect(Object.hasOwn(parsed.tokenSpeed.raw[0], 'bankItemId')).toBe(false);
+    });
+
     it('剥离后仍保留数值字段', () => {
       const parsed = JSON.parse(report.json);
       const first = parsed.tokenSpeed.raw[0];
@@ -260,6 +266,29 @@ describe('reporter', () => {
       expect(report.md).toContain('| Sample数量（-n） | 0 |');
       expect(report.md).toContain('| --extra-body | {"chat_template_kwargs"');
       expect(report.md).not.toContain('| API Key |');
+    });
+
+    it('在 Markdown、HTML 与 JSON 中展示题库摘要和逐请求条目 ID', async () => {
+      const results = makeResults();
+      results.tokenSpeed.config.bank = {
+        name: 'poems',
+        version: 1,
+        hash: '123456789abc',
+        itemCount: 30
+      };
+      results.tokenSpeed.raw[0].bankItemId = 'wujue-jingyesi';
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-bank-'));
+      try {
+        await generateReport(results, dir);
+        const generated = await readReport(dir);
+        const parsed = JSON.parse(generated.json);
+        expect(parsed.tokenSpeed.config.bank).toEqual(results.tokenSpeed.config.bank);
+        expect(parsed.tokenSpeed.raw[0].bankItemId).toBe('wujue-jingyesi');
+        expect(generated.md).toContain('| 题库 | poems v1（30 条，hash 123456789abc） |');
+        expect(generated.html).toContain('poems v1（30 条，hash 123456789abc）');
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
     });
 
     it('包含 TTFO 与 token 来源，且不含已移除的解码总吞吐', () => {
