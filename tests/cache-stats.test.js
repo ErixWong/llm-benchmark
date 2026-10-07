@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   extractCacheUsage,
   isTruncated,
-  summarizeCache
+  summarizeCache,
+  summarizeDiagnostics,
+  shouldWarnAboutTps,
+  shouldCollapseTpsStatistics
 } from '../src/cache-stats.js';
 
 const cacheRequest = (cacheIntent, ttft, fields = {}) => ({
@@ -85,6 +88,90 @@ describe('cache-stats', () => {
       expect(isTruncated({ outputTokens: 0, maxOutputTokens: 0 })).toBe(false);
       expect(isTruncated({ outputTokens: 10, maxOutputTokens: '10' })).toBe(false);
       expect(isTruncated({})).toBe(false);
+    });
+  });
+
+  describe('summarizeDiagnostics', () => {
+    it('counts truncation and response-cache clues without probe metadata', () => {
+      expect(summarizeDiagnostics([
+        {
+          success: true,
+          outputTokens: 8,
+          maxOutputTokens: 8,
+          contentTokens: 8,
+          generationTime: 0,
+          hasUsage: true
+        },
+        {
+          success: true,
+          outputTokens: 4,
+          maxOutputTokens: 8,
+          contentTokens: 4,
+          generationTime: 10,
+          hasUsage: false
+        },
+        {
+          success: false,
+          outputTokens: 8,
+          maxOutputTokens: 8,
+          contentTokens: 8,
+          generationTime: 0,
+          hasUsage: true
+        }
+      ])).toEqual({ responseCacheSuspected: 2, truncatedRequests: 1 });
+    });
+
+    it('keeps the general and cache diagnostic counts identical', () => {
+      const requests = [
+        cacheRequest('miss', 10, {
+          contentTokens: 2,
+          outputTokens: 2,
+          maxOutputTokens: 2,
+          generationTime: 0,
+          hasUsage: true
+        }),
+        cacheRequest('hit', 20, {
+          contentTokens: 3,
+          outputTokens: 3,
+          maxOutputTokens: 5,
+          generationTime: 10,
+          hasUsage: true
+        })
+      ];
+      const diagnostics = summarizeDiagnostics(requests);
+      const cache = summarizeCache(requests);
+
+      expect(cache).toMatchObject(diagnostics);
+    });
+  });
+
+  describe('TPS display decisions', () => {
+    it('warns for a short median output or when every request hit max_tokens', () => {
+      expect(shouldWarnAboutTps({ outputTokensMedian: 4 })).toBe(true);
+      expect(shouldWarnAboutTps({ outputTokensMedian: 5 })).toBe(false);
+      expect(shouldWarnAboutTps({
+        outputTokensMedian: 8,
+        truncatedRequests: 2,
+        totalRequests: 2
+      })).toBe(true);
+      expect(shouldWarnAboutTps({
+        outputTokensMedian: 8,
+        truncatedRequests: 1,
+        totalRequests: 2
+      })).toBe(false);
+      expect(shouldWarnAboutTps({
+        outputTokensMedian: Number.NaN,
+        truncatedRequests: 0,
+        totalRequests: 0
+      })).toBe(false);
+    });
+
+    it('folds TPS statistics only when fewer than three samples are available', () => {
+      expect(shouldCollapseTpsStatistics(0)).toBe(true);
+      expect(shouldCollapseTpsStatistics(1)).toBe(true);
+      expect(shouldCollapseTpsStatistics(2)).toBe(true);
+      expect(shouldCollapseTpsStatistics(3)).toBe(false);
+      expect(shouldCollapseTpsStatistics(undefined)).toBe(false);
     });
   });
 

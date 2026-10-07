@@ -108,6 +108,43 @@ afterEach(async () => {
 });
 
 describe('cache-probe integration', () => {
+  it('non-probe 运行也记录通用截断诊断并在控制台提示 TPS 限制', async () => {
+    const server = await createMockSseServer({
+      mode: 'cache-aware',
+      completionTokens: 1
+    });
+    activeServer = server;
+    const consoleOutput = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const results = await runLlmBenchmarkTest({
+        url: server.url,
+        model: 'mock-model',
+        inputText: 'A regular benchmark request.',
+        samples: 1,
+        maxOutputTokens: 1,
+        warmupRequests: 0,
+        timeout: 3000,
+        retry: 0
+      });
+      const consoleText = consoleOutput.mock.calls.map(([line]) => String(line)).join('\n');
+
+      expect(results.metrics.cache).toBeUndefined();
+      expect(results.metrics.diagnostics).toEqual({
+        responseCacheSuspected: 0,
+        truncatedRequests: 1
+      });
+      expect(results.config.timeout).toBe(3000);
+      expect(results.config.extraBody).toEqual({});
+      expect(consoleText).toContain('TPS 统计（样本不足，n=1）');
+      expect(consoleText).toContain('⚠️ 输出过短，TPS 不具意义');
+      expect(consoleText).toContain('⚠️ 1 条请求输出被 max_tokens 截断');
+      expect(consoleText).toContain('TTFT 到首个生成 token（含 reasoning）；TTFO 到首个可见内容。');
+    } finally {
+      consoleOutput.mockRestore();
+    }
+  });
+
   it('串行预热所有前缀后按 cold/warm 成对发送，且两组仅 nonce 不同', async () => {
     const run = await runProbe('cache-aware');
     activeServer = run.server;

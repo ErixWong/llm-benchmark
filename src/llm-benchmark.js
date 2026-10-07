@@ -10,7 +10,13 @@ import { generateContext, countMessagesTokens, validateContext } from './context
 import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, getDefaultTimeout } from './http-client.js';
 import { computeTokenStats } from './token-stats.js';
 import { sanitizeExtraBody } from './extra-body.js';
-import { extractCacheUsage, summarizeCache } from './cache-stats.js';
+import {
+  extractCacheUsage,
+  summarizeCache,
+  summarizeDiagnostics,
+  shouldWarnAboutTps,
+  shouldCollapseTpsStatistics
+} from './cache-stats.js';
 
 /**
  * 运行LLM基准测试
@@ -463,6 +469,8 @@ export async function runLlmBenchmarkTest(options) {
     concurrencyMode,
     samples,
     totalTime,
+    timeout,
+    extraBody: sanitizeExtraBody(extraBody).body,
     sampleCount,
     uniqueInputs: requestPlan
       ? new Set(requestPlan.map(request => request.text)).size
@@ -693,6 +701,7 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
 function processTokenSpeedResult(results, config) {
   const successResults = results.filter(r => r.success);
   const failedResults = results.filter(r => !r.success);
+  const diagnostics = summarizeDiagnostics(successResults);
 
   if (successResults.length === 0) {
     return {
@@ -702,7 +711,10 @@ function processTokenSpeedResult(results, config) {
       success: false,
       error: 'All requests failed',
       failedCount: failedResults.length,
-      ...(config.cacheProbe ? { metrics: { cache: summarizeCache(successResults) } } : {})
+      metrics: {
+        diagnostics,
+        ...(config.cacheProbe ? { cache: summarizeCache(successResults) } : {})
+      }
     };
   }
 
@@ -769,6 +781,7 @@ function processTokenSpeedResult(results, config) {
         api: apiTokenRequests,
         tokenizer: successResults.length - apiTokenRequests
       },
+      diagnostics,
       requestTime: {
         mean: average(requestTimeValues),
         min: safeMin(requestTimeValues),
@@ -847,10 +860,26 @@ function printTokenSpeedSummary(result) {
   }
 
   console.log(chalk.cyan('\nToken生成速度 (TPS):'));
-  console.log(`  平均: ${formatTps(result.metrics.tps.mean)}`);
-  console.log(`  中位数: ${formatTps(result.metrics.tps.median)}`);
-  console.log(`  最小: ${formatTps(result.metrics.tps.min)}`);
-  console.log(`  最大: ${formatTps(result.metrics.tps.max)}`);
+  const tpsSampleCount = Array.isArray(result.metrics.tps.values)
+    ? result.metrics.tps.values.length
+    : result.config.samples;
+  if (shouldCollapseTpsStatistics(tpsSampleCount)) {
+    console.log(`  TPS 统计（样本不足，n=${tpsSampleCount}）: ${formatTpsStatistics(result.metrics.tps)}`);
+  } else {
+    console.log(`  平均: ${formatTps(result.metrics.tps.mean)}`);
+    console.log(`  中位数: ${formatTps(result.metrics.tps.median)}`);
+    console.log(`  最小: ${formatTps(result.metrics.tps.min)}`);
+    console.log(`  最大: ${formatTps(result.metrics.tps.max)}`);
+  }
+  if (shouldWarnAboutTps({
+    outputTokensMedian: result.metrics.outputTokens.median,
+    truncatedRequests: result.metrics.diagnostics?.truncatedRequests
+      ?? result.metrics.cache?.truncatedRequests
+      ?? 0,
+    totalRequests: result.config.samples
+  })) {
+    console.log(chalk.yellow('  ⚠️ 输出过短，TPS 不具意义'));
+  }
   console.log(`  整体吞吐: ${formatTps(result.metrics.throughputTps)} (总输出tokens / 总测试时间，墙钟口径)`);
 
   console.log(chalk.cyan('\n首Token延迟:'));
@@ -861,6 +890,7 @@ function printTokenSpeedSummary(result) {
   if (result.metrics.ttfo?.values?.length > 0) {
     console.log(`  TTFO (首个可见内容) 平均: ${formatLatency(result.metrics.ttfo.mean)}`);
   }
+  console.log(chalk.gray('  TTFT 到首个生成 token（含 reasoning）；TTFO 到首个可见内容。'));
 
   console.log(chalk.cyan('\n输出Token数:'));
   console.log(`  平均: ${result.metrics.outputTokens.mean.toFixed(0)} tokens`);
@@ -889,6 +919,7 @@ function printTokenSpeedSummary(result) {
   if (result.metrics.cache) {
     printCacheSummary(result.metrics.cache, result.config);
   }
+  printDiagnosticWarnings(result.metrics);
   console.log('─'.repeat(50));
 }
 
@@ -922,19 +953,33 @@ function printCacheSummary(cache, config) {
   console.log(`  服务端命中率: ${serverHitRate}；覆盖请求: ${coveredRequests}/${config.samples}`);
   console.log(`  前缀自检: 唯一性 ${prefixValidation?.unique?.ok ? '通过' : '失败'}；`
     + `预热前缀匹配 ${prefixValidation?.verified ?? 0}/${unitCount}`);
-  if (cache.responseCacheSuspected > 0) {
-    console.log(chalk.yellow(
-      `  ⚠️ 疑似响应级缓存 ${cache.responseCacheSuspected} 条：TPS/解码类指标可能无效`
-    ));
-  }
-  if (cache.truncatedRequests > 0) {
-    console.log(chalk.yellow(
-      `  ⚠️ ${cache.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
-    ));
-  }
   if (cache.insufficientSamples) {
     console.log(chalk.yellow('  样本不足，不做结论'));
   }
+}
+
+function printDiagnosticWarnings(metrics) {
+  const diagnostics = metrics.diagnostics ?? metrics.cache ?? {};
+  if (diagnostics.responseCacheSuspected > 0) {
+    console.log(chalk.yellow(
+      `  ⚠️ 疑似响应级缓存 ${diagnostics.responseCacheSuspected} 条：TPS/解码类指标可能无效`
+    ));
+  }
+  if (diagnostics.truncatedRequests > 0) {
+    console.log(chalk.yellow(
+      `  ⚠️ ${diagnostics.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
+    ));
+  }
+}
+
+function formatTpsStatistics(stats) {
+  const formattedValues = [stats.mean, stats.median, stats.min, stats.max]
+    .map((value) => value.toFixed(2));
+  if (new Set(formattedValues).size === 1) {
+    return `${formatTps(stats.mean)}（平均/中位数/最小/最大相同）`;
+  }
+  return `平均 ${formatTps(stats.mean)}；中位数 ${formatTps(stats.median)}；`
+    + `最小 ${formatTps(stats.min)}；最大 ${formatTps(stats.max)}`;
 }
 
 /**
