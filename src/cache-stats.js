@@ -59,7 +59,8 @@ export function isTruncated({ outputTokens, maxOutputTokens } = {}) {
  *            responseCacheSuspected:number, truncatedRequests:number}}
  */
 export function summarizeCache(requests = []) {
-  const successfulRequests = requests.filter((request) => request?.success !== false);
+  const sourceRequests = Array.isArray(requests) ? requests : [];
+  const successfulRequests = sourceRequests.filter((request) => request?.success !== false);
   const coldTtft = [];
   const warmTtft = [];
   const requestsByUnit = new Map();

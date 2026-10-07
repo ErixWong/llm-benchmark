@@ -89,6 +89,10 @@ describe('cache-stats', () => {
   });
 
   describe('summarizeCache', () => {
+    it('returns the empty summary for an explicitly null request list', () => {
+      expect(summarizeCache(null)).toEqual(summarizeCache([]));
+    });
+
     it('aggregates server cache tokens and computes the hit rate', () => {
       const result = summarizeCache([
         cacheRequest('miss', 100, {

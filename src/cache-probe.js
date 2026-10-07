@@ -110,24 +110,44 @@ export function checkUniquePrefixes(units = []) {
  * @returns {{ok:boolean,unique:Object,verified:number,total:number,errors:string[]}}
  */
 export function evaluateProbePreflight(units = []) {
-  const unique = checkUniquePrefixes(units);
-  const prefixChecks = units.map((unit) => verifyPrefix(unit?.primed, unit?.warm));
+  const sourceUnits = Array.isArray(units) ? units : [];
+  const unique = checkUniquePrefixes(sourceUnits);
+  const prefixChecks = sourceUnits.map((unit) => verifyPrefix(unit?.primed, unit?.warm));
   const verified = prefixChecks.filter((check) => check.ok).length;
+  const hashMatches = sourceUnits.filter((unit) => (
+    typeof unit?.primed === 'string' && unit.prefixHash === hashText(unit.primed)
+  )).length;
+  const tokenCountMatches = sourceUnits.filter((unit) => (
+    typeof unit?.primed === 'string' && unit.prefixTokens === countTokens(unit.primed)
+  )).length;
   const errors = [];
 
+  if (sourceUnits.length === 0) {
+    errors.push('没有可校验的缓存探针单元');
+  }
   if (!unique.ok) {
     errors.push(`前缀不唯一（重复项 ${unique.duplicates.length} 个）`);
   }
   const failedChecks = prefixChecks.filter((check) => !check.ok);
   if (failedChecks.length > 0) {
-    errors.push(`热请求前缀匹配失败 ${failedChecks.length}/${units.length}`);
+    errors.push(`热请求前缀匹配失败 ${failedChecks.length}/${sourceUnits.length}`);
+  }
+  if (hashMatches !== sourceUnits.length) {
+    errors.push(`预热前缀摘要校验失败 ${sourceUnits.length - hashMatches}/${sourceUnits.length}`);
+  }
+  if (tokenCountMatches !== sourceUnits.length) {
+    errors.push(`预热前缀 Token 数校验失败 ${sourceUnits.length - tokenCountMatches}/${sourceUnits.length}`);
   }
 
   return {
-    ok: unique.ok && verified === units.length,
+    ok: sourceUnits.length > 0
+      && unique.ok
+      && verified === sourceUnits.length
+      && hashMatches === sourceUnits.length
+      && tokenCountMatches === sourceUnits.length,
     unique,
     verified,
-    total: units.length,
+    total: sourceUnits.length,
     errors
   };
 }

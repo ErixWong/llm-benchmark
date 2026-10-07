@@ -116,22 +116,46 @@ describe('cache-probe', () => {
       });
 
       it('fails duplicate nonce units and reports the preflight errors', () => {
-        const repeatedUnit = {
-          primed: 'primed',
-          warm: 'warm',
-          cold: 'cold'
-        };
+        const [repeatedUnit] = buildProbeUnits({
+          materials: [materials[0]],
+          suffix,
+          runSalt: 'abcd'
+        });
 
         const result = evaluateProbePreflight([repeatedUnit, repeatedUnit]);
 
         expect(result.ok).toBe(false);
         expect(result.unique.ok).toBe(false);
-        expect(result.verified).toBe(0);
+        expect(result.verified).toBe(2);
         expect(result.total).toBe(2);
-        expect(result.errors).toEqual([
-          '前缀不唯一（重复项 3 个）',
-          '热请求前缀匹配失败 2/2'
-        ]);
+        expect(result.errors).toEqual(['前缀不唯一（重复项 3 个）']);
+      });
+
+      it('rejects an explicitly null unit list with a clear error', () => {
+        expect(evaluateProbePreflight(null)).toEqual({
+          ok: false,
+          unique: { ok: true, duplicates: [] },
+          verified: 0,
+          total: 0,
+          errors: ['没有可校验的缓存探针单元']
+        });
+      });
+
+      it.each(['prefixHash', 'prefixTokens'])('rejects a tampered %s', (field) => {
+        const [unit] = buildProbeUnits({ materials: [materials[0]], runSalt: 'abcd' });
+        const tamperedUnit = {
+          ...unit,
+          [field]: field === 'prefixHash' ? 'tampered' : unit.prefixTokens + 1
+        };
+
+        const result = evaluateProbePreflight([tamperedUnit]);
+
+        expect(result.ok).toBe(false);
+        expect(result.errors).toContain(
+          field === 'prefixHash'
+            ? '预热前缀摘要校验失败 1/1'
+            : '预热前缀 Token 数校验失败 1/1'
+        );
       });
     });
 

@@ -101,12 +101,16 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 | `pairsTotal` / `pairsFavorable` / `pairsUnfavorable` / `pairsTied` | 有效配对总数，以及差值分别小于、大于、等于 0 的配对数 |
 | `pairedMedianDeltaMs` | `pairDeltas` 的中位数；没有有效配对时为 `null` |
 | `ttftDeltaMs` | `cold.median - warm.median`；正数表示 warm 组中位 TTFT 较低，仅作参考，不参与判定 |
-| `ttftRatio` | `cold.median / warm.median`；warm 中位数为 0 或数据不足时为 `null`，仅作参考 |
+| `ttftRatio` | 冷、热中位数均存在且 warm 中位数不为 0 时为 `cold.median / warm.median`；样本不足本身不会令比值为 `null`，若此时可计算则仅供参考、不得据此下结论，是否样本不足看 `insufficientSamples` |
 | `insufficientSamples` | cold / warm 任一组有效 TTFT 样本数少于 3，或有效配对少于 3 |
 | `server` | 至少一条成功请求上报缓存字段（`cacheSource === "api"`）时为对象，否则为 `null`；可含 `cachedPromptTokens`、`promptTokens`、`tokenHitRate`、`requestsWithData` 与 `source: "api"`。`requestsWithData` 为 0 时对象仍非 null，但 `tokenHitRate` 为 `null` |
 | `verdict` / `reason` | 配对证据判定及对应原因码，按下方规则产生 |
 | `responseCacheSuspected` | 可疑响应级缓存请求数；仅作诊断线索，非零时控制台与 Markdown / HTML 报告显示警告 |
 | `truncatedRequests` | 输出 token 数触及 `max_tokens` 上限的请求数；非零时控制台与 Markdown / HTML 报告显示警告 |
+
+JSON 报告 `tokenSpeed.config.bank` 记录探针素材库来源与整体指纹：`name` 为素材库类型，
+`hash` 是按稳定文件顺序对完整素材文本（不含运行 nonce / runSalt）计算的 12 位 SHA-256
+摘要，用于识别素材文本变化。
 
 `--prefix-tokens` 是客户端 tokenizer 口径的目标值，服务端实际 `prompt_tokens` 可能明显不同（不同 tokenizer 的实测差异可达 30%）；报告中的 `promptTokens` 一律以服务端 usage 为准。两种来源不可混算，沿用“不同来源不得相减”。
 
@@ -183,8 +187,8 @@ JSON 报告的 `raw[]` 新增以下可选逐请求诊断字段（旧报告可能
 - **并发会产生淘汰**：并发大于 1 时，cold 组的大前缀可能挤掉已预热的 warm 前缀。
   因此命中率低于 100% 可能是被测服务缓存容量/调度的真实测量结果，不是工具错误。
 - **假阴性防护**：任何前缀自检（包括 hash 自检，如检测到摘要不匹配）失败时都必须报错中止，
-  不得继续给出缓存结论。当前运行时自检检查文本唯一性与 warm 是否以前缀原文开头；
-  `prefixHash` / `prefixTokens` 从构造的前缀生成并记录，运行时没有单独重算 hash 的步骤。
+  不得继续给出缓存结论。运行时自检检查文本唯一性、warm 是否以前缀原文开头，以及重新计算
+  `primed` 文本的 hash 和 token 数是否与记录值一致。
   `prefixHash` 是客户端摘要，不是服务端缓存命中的证明。
 - 探针预热会改变服务端缓存状态；只对获准的测试端点运行，不要对生产服务做未经授权的压力测试。
 
