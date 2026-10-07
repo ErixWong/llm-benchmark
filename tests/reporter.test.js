@@ -56,6 +56,8 @@ function makeResults() {
       metrics: {
         tps: { mean: 52, min: 50, max: 55, median: 52, values: [52, 53, 55] },
         throughputTps: 38.4,
+        decodeThroughputTps: 60.1,
+        effectiveDecodeConcurrency: 0.85,
         ttft: { mean: 101, min: 100, max: 102, median: 101, values: [100, 101, 102] },
         ttfo: { mean: 2001, min: 2000, max: 2002, median: 2001, values: [2000, 2001, 2002] },
         outputTokens: { mean: 257, min: 256, max: 258, median: 257 },
@@ -164,7 +166,7 @@ describe('reporter', () => {
 
   describe('JSON 报告', () => {
     it('写入 metricsVersion', () => {
-      expect(JSON.parse(report.json).metricsVersion).toBe(1.2);
+      expect(JSON.parse(report.json).metricsVersion).toBe(1.3);
     });
 
     it('默认剥离模型输出全文', () => {
@@ -298,6 +300,18 @@ describe('reporter', () => {
       expect(report.html).toContain('TTFT</b> = 到首个生成 token（含 reasoning）');
       expect(report.html).toContain('TTFO</b> = 到首个可见内容');
       expect(report.md).not.toContain('解码总吞吐');
+    });
+
+    it('在 JSON、Markdown 与 HTML 中展示新的解码期吞吐指标', () => {
+      const metrics = JSON.parse(report.json).tokenSpeed.metrics;
+      expect(metrics.decodeThroughputTps).toBe(60.1);
+      expect(metrics.effectiveDecodeConcurrency).toBe(0.85);
+      expect(report.md).toContain('| 解码期聚合吞吐（解码窗口并集） | 60.10 tokens/s |');
+      expect(report.md).toContain('| 有效解码并发度 | 0.850 |');
+      expect(report.md).toContain('throughputTps = 平均单流 TPS × effectiveDecodeConcurrency');
+      expect(report.html).toContain('解码期聚合吞吐 TPS (窗口并集)');
+      expect(report.html).toContain('有效解码并发度');
+      expect(report.html).toContain('throughputTps = 平均单流 TPS × effectiveDecodeConcurrency');
     });
 
     it('包含推理/内容 token 拆分', () => {

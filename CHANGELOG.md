@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- 新增 `metrics.decodeThroughputTps`（成功请求解码窗口并集口径）与
+  `metrics.effectiveDecodeConcurrency`（解码时长总和 ÷ 墙钟时间）；控制台、Markdown 与 HTML
+  展示新指标及吞吐关系提示，JSON `metricsVersion` 升至 `1.3`。仅新增字段，非 BREAKING。
 - `--bank <name>` / `BANK` 列表型题库：按 `tags.outputTier` 分层做 seeded 轮转，使用条目 prompt
   并记录题库摘要与逐请求 `bankItemId`；`--bank-items <ids>` 可按显式 ID 顺序复现选择。
   题库与 `-n N` 互斥，且暂不支持缓存探针。只新增可选报告字段，`METRICS_VERSION` 不变。
@@ -54,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   覆盖报告剑离、`metricsVersion` 与三处转义
 
 ### Removed
-- `metrics.decodeThroughputTps`（单流 TPS × 并发）：无任何基准工具采用此口径，
+- 旧定义 `metrics.decodeThroughputTps`（单流 TPS × 客户端并发）：无任何基准工具采用此口径，
   且客户端并发大于服务端并行度时高估可达 2 倍以上；系统级吞吐统一用墙钟口径的
   `throughputTps`
 - 未使用的 `src/config.js` 与 `config/default.json`（全项目零引用）
