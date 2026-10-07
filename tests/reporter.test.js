@@ -93,6 +93,12 @@ function makeCacheResults() {
     warm: { n: 3, median: 20, min: 15, max: 25 },
     ttftDeltaMs: 100,
     ttftRatio: 6,
+    pairDeltas: [-100, -100, -100],
+    pairsTotal: 3,
+    pairsFavorable: 3,
+    pairsUnfavorable: 0,
+    pairsTied: 0,
+    pairedMedianDeltaMs: -100,
     insufficientSamples: false,
     server: {
       cachedPromptTokens: 300,
@@ -102,6 +108,7 @@ function makeCacheResults() {
       source: 'api'
     },
     verdict: 'benefit',
+    reason: 'consistent-benefit',
     responseCacheSuspected: 0,
     truncatedRequests: 0
   };
@@ -143,7 +150,7 @@ describe('reporter', () => {
 
   describe('JSON 报告', () => {
     it('写入 metricsVersion', () => {
-      expect(JSON.parse(report.json).metricsVersion).toBe(1.1);
+      expect(JSON.parse(report.json).metricsVersion).toBe(2);
     });
 
     it('默认剥离模型输出全文', () => {
@@ -251,13 +258,18 @@ describe('reporter', () => {
         expect(md).toContain('热组 TTFT min / max | 15 ms / 25 ms');
         expect(md).toContain('冷-热 TTFT 差值（中位数之差）');
         expect(md).toContain('6.00×');
+        expect(md).toContain('配对差值（热-冷，按单元） | -100 ms, -100 ms, -100 ms');
+        expect(md).toContain('一致有利配对 | 3/3');
         expect(md).toContain('观察到缓存收益');
+        expect(md).toContain('配对差值一致支持收益');
         expect(md).toContain('50.00%');
         expect(md).toContain('6/6');
         expect(md).toContain('唯一性 通过；预热前缀匹配 1/1');
         expect(md).not.toContain('prefill 耗时');
         expect(html).toContain('class="card cache-probe"');
         expect(html).toContain('服务端 token 命中率');
+        expect(html).toContain('一致有利配对');
+        expect(html).toContain('配对差值一致支持收益');
         expect(html).toContain('唯一性 通过；预热前缀匹配 1/1');
       } finally {
         await fs.rm(dir, { recursive: true, force: true });
@@ -269,14 +281,18 @@ describe('reporter', () => {
       results.tokenSpeed.metrics.cache.server = null;
       results.tokenSpeed.metrics.cache.insufficientSamples = true;
       results.tokenSpeed.metrics.cache.verdict = 'inconclusive';
+      results.tokenSpeed.metrics.cache.reason = 'insufficient-samples';
+      results.tokenSpeed.metrics.cache.pairDeltas = [-100, -100];
+      results.tokenSpeed.metrics.cache.pairsTotal = 2;
+      results.tokenSpeed.metrics.cache.pairsFavorable = 2;
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-bench-report-cache-'));
       try {
         await generateReport(results, dir);
         const { md, html } = await readReport(dir);
-        expect(md).toContain('服务端未上报缓存字段，结论依据为冷/热行为对比');
+        expect(md).toContain('服务端未上报缓存字段；结论依据为成对 TTFT 行为');
         expect(md).toContain('样本不足，不做结论');
         expect(md).toContain('结论不确定');
-        expect(html).toContain('服务端未上报缓存字段，结论依据为冷/热行为对比');
+        expect(html).toContain('服务端未上报缓存字段；结论依据为成对 TTFT 行为');
         expect(html).toContain('样本不足，不做结论');
       } finally {
         await fs.rm(dir, { recursive: true, force: true });

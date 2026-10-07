@@ -46,6 +46,10 @@ export async function runLlmBenchmarkTest(options) {
     retry = 3
   } = options;
 
+  if (cacheProbe && (cacheProbe.warmupMode === 'none' || warmupMode === 'none')) {
+    throw new Error('缓存探针必须预热前缀，请使用默认 prefix 或 model');
+  }
+
   // 统一获取 User-Agent
   const userAgent = process.env.USER_AGENT || 'llm-benchmark/1.0.0';
 
@@ -170,30 +174,7 @@ export async function runLlmBenchmarkTest(options) {
   // 探针预热按单元串行执行，确保计时请求开始前所有待测前缀已预置。
   if (cacheProbe) {
     const mode = cacheProbe.warmupMode === 'auto' ? 'prefix' : cacheProbe.warmupMode;
-    if (mode === 'prefix') {
-      const warmupSpinner = ora(`执行缓存前缀预热 (0/${cacheProbe.units.length})...`).start();
-      for (let i = 0; i < cacheProbe.units.length; i++) {
-        warmupSpinner.text = `执行缓存前缀预热 (${i + 1}/${cacheProbe.units.length})...`;
-        try {
-          const result = await measureTokenSpeed(
-            httpClient,
-            normalizedUrl,
-            userAgent,
-            model,
-            [{ role: 'user', content: cacheProbe.units[i].primed }],
-            1,
-            extraBody
-          );
-          if (!result.success) {
-            throw new Error(`缓存前缀预热请求 #${i + 1} 未成功`);
-          }
-        } catch (error) {
-          warmupSpinner.fail(`缓存前缀预热失败 (${i + 1}/${cacheProbe.units.length})`);
-          throw error;
-        }
-      }
-      warmupSpinner.succeed('缓存前缀预热完成');
-    } else if (mode === 'model') {
+    if (mode === 'model') {
       const modelWarmupText = `[c-model-warmup-${randomUUID()}] 请回复 ok`;
       await measureTokenSpeed(
         httpClient,
@@ -204,10 +185,33 @@ export async function runLlmBenchmarkTest(options) {
         1,
         extraBody
       );
-      console.log(chalk.gray('模型/JIT 预热完成（未预热待测前缀）'));
-    } else if (mode !== 'none') {
+      console.log(chalk.gray('模型/JIT 预热完成，开始缓存前缀预热'));
+    } else if (mode !== 'prefix') {
       throw new Error(`无效的缓存探针预热模式: ${mode}`);
     }
+
+    const warmupSpinner = ora(`执行缓存前缀预热 (0/${cacheProbe.units.length})...`).start();
+    for (let i = 0; i < cacheProbe.units.length; i++) {
+      warmupSpinner.text = `执行缓存前缀预热 (${i + 1}/${cacheProbe.units.length})...`;
+      try {
+        const result = await measureTokenSpeed(
+          httpClient,
+          normalizedUrl,
+          userAgent,
+          model,
+          [{ role: 'user', content: cacheProbe.units[i].primed }],
+          1,
+          extraBody
+        );
+        if (!result.success) {
+          throw new Error(`缓存前缀预热请求 #${i + 1} 未成功`);
+        }
+      } catch (error) {
+        warmupSpinner.fail(`缓存前缀预热失败 (${i + 1}/${cacheProbe.units.length})`);
+        throw error;
+      }
+    }
+    warmupSpinner.succeed('缓存前缀预热完成');
   } else if (warmupMode === 'prefix') {
     throw new Error('warmup-mode prefix 需要启用 --cache-probe');
   } else if (warmupMode === 'model') {
@@ -884,6 +888,11 @@ function printCacheSummary(cache, config) {
   const deltaText = cache.ttftDeltaMs === null
     ? 'N/A'
     : `${cache.ttftDeltaMs >= 0 ? '+' : '-'}${formatLatency(Math.abs(cache.ttftDeltaMs))}`;
+  const pairDeltaText = cache.pairDeltas.length > 0
+    ? cache.pairDeltas.map((delta) => (
+      `${delta >= 0 ? '+' : '-'}${formatLatency(Math.abs(delta))}`
+    )).join(', ')
+    : 'N/A';
   const ratioText = cache.ttftRatio === null ? 'N/A' : `${cache.ttftRatio.toFixed(2)}×`;
   const serverHitRate = cache.server?.tokenHitRate == null
     ? 'N/A'
@@ -897,7 +906,10 @@ function printCacheSummary(cache, config) {
   console.log(`  热组 TTFT 中位数: ${medianText(cache.warm.median)} (n=${cache.warm.n})`);
   console.log(`  冷-热差值: ${deltaText}`);
   console.log(`  冷/热倍数: ${ratioText}`);
+  console.log(`  配对差值（热-冷）: ${pairDeltaText}`);
+  console.log(`  一致有利配对: ${cache.pairsFavorable}/${cache.pairsTotal}`);
   console.log(`  Verdict: ${cache.verdict}`);
+  console.log(`  Reason: ${cache.reason}`);
   console.log(`  服务端命中率: ${serverHitRate}；覆盖请求: ${coveredRequests}/${config.samples}`);
   console.log(`  前缀自检: 唯一性 ${prefixValidation?.unique?.ok ? '通过' : '失败'}；`
     + `预热前缀匹配 ${prefixValidation?.verified ?? 0}/${unitCount}`);

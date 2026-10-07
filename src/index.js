@@ -190,6 +190,10 @@ program
       console.error(chalk.red('❌ 错误: warmup-mode prefix 需要启用 --cache-probe'));
       process.exit(1);
     }
+    if (cacheProbeEnabled && warmupMode === 'none') {
+      console.error(chalk.red('❌ 错误: 缓存探针必须预热前缀，请使用默认 prefix 或 model'));
+      process.exit(1);
+    }
     if (prefixTokens < 1) {
       console.error(chalk.red('❌ 错误: --prefix-tokens 必须大于 0'));
       process.exit(1);

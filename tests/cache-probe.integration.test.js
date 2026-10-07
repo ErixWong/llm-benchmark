@@ -12,7 +12,7 @@ const MATERIALS = Array.from({ length: 3 }, (_, index) => ({
 const RUN_SALT = 'wxyz';
 const SUFFIX = '\n\nSummarize the material.';
 
-function makeProbe() {
+function makeProbe(warmupMode = 'prefix') {
   const units = buildProbeUnits({
     materials: MATERIALS,
     suffix: SUFFIX,
@@ -34,7 +34,7 @@ function makeProbe() {
     cacheProbe: {
       units,
       suffix: SUFFIX,
-      warmupMode: 'prefix',
+      warmupMode,
       order: 'cold-warm',
       runSalt: RUN_SALT,
       prefixValidation
@@ -42,8 +42,11 @@ function makeProbe() {
   };
 }
 
-async function runProbe(mode, { maxOutputTokens = 4, completionTokens = 1 } = {}) {
-  const probe = makeProbe();
+async function runProbe(
+  mode,
+  { maxOutputTokens = 4, completionTokens = 1, warmupMode = 'prefix' } = {}
+) {
+  const probe = makeProbe(warmupMode);
   const server = await createMockSseServer({
     mode,
     prefixes: probe.units.map((unit) => unit.primed),
@@ -119,6 +122,31 @@ describe('cache-probe integration', () => {
     );
     expect(run.results.raw.map((request) => request.cacheIntent))
       .toEqual(run.requestPlan.map((request) => request.intent));
+    expect(run.consoleText).toContain('配对差值（热-冷）');
+    expect(run.consoleText).toContain('Reason:');
+  });
+
+  it('model 模式先做模型预热，再串行 priming 所有前缀', async () => {
+    const run = await runProbe('cache-aware', { warmupMode: 'model' });
+    activeServer = run.server;
+    const { requests } = run.server;
+    const firstPrefixWarmup = 1;
+
+    expect(requests[0].firstUserContent).toMatch(/^\[c-model-warmup-[0-9a-f-]{36}\]/);
+    expect(requests.slice(firstPrefixWarmup, firstPrefixWarmup + run.units.length)
+      .map((request) => request.firstUserContent))
+      .toEqual(run.units.map((unit) => unit.primed));
+    expect(requests.slice(firstPrefixWarmup, firstPrefixWarmup + run.units.length)
+      .every((request) => request.cacheHit === false)).toBe(true);
+    expect(requests).toHaveLength(1 + run.units.length + run.requestPlan.length);
+  });
+
+  it('cache probe rejects warmup-mode none before sending requests', async () => {
+    const probe = makeProbe('none');
+
+    await expect(runLlmBenchmarkTest({
+      cacheProbe: probe.cacheProbe
+    })).rejects.toThrow('缓存探针必须预热前缀，请使用默认 prefix 或 model');
   });
 
   it('cache-aware usage 报告命中并测得 warm TTFT 更低', async () => {
@@ -127,6 +155,7 @@ describe('cache-probe integration', () => {
     const cache = run.results.metrics.cache;
 
     expect(cache.verdict).toBe('benefit');
+    expect(cache.reason).toBe('consistent-benefit');
     expect(cache.server.tokenHitRate).toBeGreaterThan(0);
     expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(run.server.requests.filter((request) => request.cacheHit)).toHaveLength(run.units.length);
@@ -140,6 +169,7 @@ describe('cache-probe integration', () => {
 
     expect(cache.server).toBeNull();
     expect(cache.verdict).toBe('benefit');
+    expect(cache.reason).toBe('consistent-benefit');
     expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(cache.responseCacheSuspected).toBe(0);
   });
@@ -151,6 +181,7 @@ describe('cache-probe integration', () => {
 
     expect(cache.server).toBeNull();
     expect(cache.verdict).toBe('benefit');
+    expect(cache.reason).toBe('consistent-benefit');
     expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(cache.responseCacheSuspected).toBe(0);
   });
@@ -191,6 +222,7 @@ describe('cache-probe integration', () => {
     expect(cache.server.tokenHitRate).toBe(0);
     expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(cache.verdict).toBe('no-benefit');
+    expect(cache.reason).toBe('server-reports-zero');
   });
 
   it('配置包含每单元前缀摘要且计时请求保留正确 cacheIntent', async () => {

@@ -43,6 +43,16 @@ function cacheVerdictLabel(verdict) {
   }[verdict] || '结论不确定';
 }
 
+function cacheReasonLabel(reason) {
+  return {
+    'insufficient-samples': '样本不足（有效配对少于 3 或冷热组样本不足）',
+    'server-reports-zero': '服务端报告零缓存命中',
+    'consistent-benefit': '配对差值一致支持收益',
+    'inconsistent-pair-deltas': '服务端报告命中，但配对差值不一致',
+    'no-consistent-benefit': '未观察到一致的配对收益'
+  }[reason] || '判定原因未知';
+}
+
 function formatCacheLatency(value) {
   return typeof value === 'number' && Number.isFinite(value)
     ? `${value.toFixed(0)} ms`
@@ -57,6 +67,12 @@ function formatCacheDelta(value) {
 function formatCacheRatio(value) {
   return typeof value === 'number' && Number.isFinite(value)
     ? `${value.toFixed(2)}×`
+    : 'N/A';
+}
+
+function formatCachePairDeltas(values) {
+  return Array.isArray(values) && values.length > 0
+    ? values.map(formatCacheDelta).join(', ')
     : 'N/A';
 }
 
@@ -83,13 +99,16 @@ function appendCacheMarkdown(lines, cache, config) {
   lines.push(`| 热组 TTFT min / max | ${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)} |`);
   lines.push(`| 冷-热 TTFT 差值（中位数之差） | ${formatCacheDelta(cache.ttftDeltaMs)} |`);
   lines.push(`| 冷/热 TTFT 倍数 | ${formatCacheRatio(cache.ttftRatio)} |`);
+  lines.push(`| 配对差值（热-冷，按单元） | ${formatCachePairDeltas(cache.pairDeltas)} |`);
+  lines.push(`| 一致有利配对 | ${cache.pairsFavorable ?? 0}/${cache.pairsTotal ?? 0} |`);
   lines.push(`| 判定 | ${cacheVerdictLabel(cache.verdict)} |`);
+  lines.push(`| 判定原因 | ${cacheReasonLabel(cache.reason)} |`);
   lines.push(`| 服务端 token 命中率 | ${server?.tokenHitRate == null ? '未知' : `${(server.tokenHitRate * 100).toFixed(2)}%`} |`);
   lines.push(`| 服务端数据覆盖请求数 | ${server?.requestsWithData ?? 0}/${sampleCount} |`);
   lines.push(`| 前缀自检 | ${getCachePrefixSummary(config)} |`);
   lines.push('');
   if (server === null) {
-    lines.push('> 服务端未上报缓存字段，结论依据为冷/热行为对比。');
+    lines.push('> 服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。');
     lines.push('');
   }
   if (cache.insufficientSamples) {
@@ -114,13 +133,18 @@ function generateCacheHtml(cache, config) {
     ['热组 TTFT min / max', `${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)}`],
     ['冷-热 TTFT 差值（中位数之差）', formatCacheDelta(cache.ttftDeltaMs)],
     ['冷/热 TTFT 倍数', formatCacheRatio(cache.ttftRatio)],
+    ['配对差值（热-冷，按单元）', formatCachePairDeltas(cache.pairDeltas)],
+    ['一致有利配对', `${cache.pairsFavorable ?? 0}/${cache.pairsTotal ?? 0}`],
     ['判定', cacheVerdictLabel(cache.verdict)],
+    ['判定原因', cacheReasonLabel(cache.reason)],
     ['服务端 token 命中率', hitRate],
     ['服务端数据覆盖请求数', `${server?.requestsWithData ?? 0}/${sampleCount}`],
     ['前缀自检', getCachePrefixSummary(config)]
   ];
   const notes = [
-    ...(server === null ? ['服务端未上报缓存字段，结论依据为冷/热行为对比。'] : []),
+    ...(server === null
+      ? ['服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。']
+      : []),
     ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : [])
   ];
 
@@ -153,8 +177,10 @@ function jsonForScript(value) {
 /**
  * 指标口径版本：major 表示既有字段含义发生不兼容变更；minor 表示纯新增字段。
  * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
+ * v1.1: 新增可选的 metrics.cache 缓存探针结果
+ * v2.0: 缓存 verdict 改为配对 TTFT 证据判定，旧版冷热组中位数判定不可直接对比
  */
-const METRICS_VERSION = 1.1;
+const METRICS_VERSION = 2.0;
 
 /**
  * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）
