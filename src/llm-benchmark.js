@@ -22,7 +22,7 @@ export async function runLlmBenchmarkTest(options) {
     inputTokens = 100,
     inputText = null,  // 支持直接传入输入文本
     inputTexts = null,  // 支持传入多个输入文本数组（用于避免缓存命中）
-    generateInputText = null,  // 动态生成输入文本的函数（每次请求随机抽取样本）
+    generateInputText = null,  // 动态生成输入文本的函数（按请求序号确定性选择样本）
     maxOutputTokens = 500,
     concurrency = 1,
     concurrencyMode = 'batch',  // 并发模式: 'batch'（批次）或 'pipeline'（流水线）
@@ -34,6 +34,9 @@ export async function runLlmBenchmarkTest(options) {
     contextRounds = 0,
     warmupRequests = 1,
     sampleCount = 0,  // 选取多少个8k sample组成上下文
+    sampleSeed = 42,
+    sampleFiles = [],
+    sampleSelections = [],
     timeout = getDefaultTimeout(),  // 请求超时时间（毫秒）
     extraBody = null,  // 附加请求体参数（如 chat_template_kwargs）
     quiet = false,  // 静默模式
@@ -83,7 +86,7 @@ export async function runLlmBenchmarkTest(options) {
   });
 
   // 生成上下文 - 支持多种输入方式
-  // 1. generateInputText函数：每次请求动态生成输入（随机抽取样本）
+  // 1. generateInputText函数：按请求序号动态生成输入
   // 2. inputTexts数组：每个请求使用不同的输入（避免缓存命中）
   // 3. inputText：所有请求使用相同输入
   // 4. 自动生成：所有请求使用相同的自动生成上下文
@@ -105,11 +108,11 @@ export async function runLlmBenchmarkTest(options) {
     // 动态生成模式：每次请求时生成新的输入
     console.log(chalk.cyan('\n🔧 测试配置:'));
     console.log(`  模型: ${model}`);
-    console.log(`  输入模式: 动态生成（每次请求随机抽取样本）`);
+    console.log(`  输入模式: 动态生成（按请求序号选择输入）`);
     console.log(`  每次抽取样本数: ${sampleCount}`);
     // 预估token数
     try {
-      const sampleInput = await generateInputText();
+      const sampleInput = await generateInputText(0);
       if (sampleInput) {
         actualTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
         console.log(`  预估输入Token数: ${actualTokens}`);
@@ -235,7 +238,7 @@ export async function runLlmBenchmarkTest(options) {
         // 动态生成或使用预设消息
         let warmupMessages;
         if (useDynamicGeneration) {
-          const warmupText = await generateInputText();
+          const warmupText = await generateInputText(0);
           warmupMessages = [{ role: 'user', content: warmupText }];
         } else {
           warmupMessages = contextMessagesList[0];
@@ -268,7 +271,7 @@ export async function runLlmBenchmarkTest(options) {
       };
     }
     if (useDynamicGeneration) {
-      const text = await generateInputText();
+      const text = await generateInputText(requestIndex);
       return {
         messages: [{ role: 'user', content: text }],
         intent: undefined,
@@ -464,6 +467,11 @@ export async function runLlmBenchmarkTest(options) {
     samples,
     totalTime,
     sampleCount,
+    ...(!cacheProbe && sampleCount > 0 ? {
+      sampleSeed,
+      sampleFiles,
+      sampleSelections
+    } : {}),
     uniqueInputs: requestPlan
       ? new Set(requestPlan.map(request => request.text)).size
       : contextMessagesList.length,  // 记录不同输入的数量

@@ -33,7 +33,8 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `--model <model>` | `API_MODEL` | **必填** | 模型名 |
 | `-c, --concurrency <n>` | `DEFAULT_CONCURRENCY` | `4` | 并发数 |
 | `-r, --rounds <n>` | `ROUNDS` | `5` | 采样轮数，**总请求数 = 并发 × 轮数** |
-| `-n, --sample-count <n>` | `SAMPLE_COUNT` | `0` | 每次请求抽取的样本数，`0` = 内置简单 prompt |
+| `-n, --sample-count <n>` | `SAMPLE_COUNT` | `0` | 每次请求确定性轮转选取的样本数，`0` = 内置简单 prompt |
+| `--sample-seed <n>` | `SAMPLE_SEED` | `42` | `-n > 0` 时决定样本轮转起点；相同素材集、种子和请求序号会选中相同文件 |
 | `-m, --max-output <n>` | `MAX_OUTPUT_TOKENS` | `30000` | `max_tokens` |
 | `--concurrency-mode <mode>` | `CONCURRENCY_MODE` | `pipeline` | `pipeline`（完成一个补一个）/ `batch`（整批等） |
 | `-t, --timeout <sec>` | `DEFAULT_TIMEOUT`（毫秒） | `90` | 单次请求超时 |
@@ -68,7 +69,7 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `DEFAULT_CONCURRENCY` / `ROUNDS` / `MAX_OUTPUT_TOKENS` | 并发 / 轮数 / `max_tokens` |
 | `CONCURRENCY_MODE` | `pipeline` \| `batch` |
 | `DEFAULT_TIMEOUT` | 请求超时，**单位毫秒** |
-| `SAMPLE_COUNT` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
+| `SAMPLE_COUNT` / `SAMPLE_SEED` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 确定性轮转种子 / 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
 | `CACHE_PROBE` / `WARMUP_MODE` | 是否启用缓存探针 / 预热方式 |
 | `PREFIX_TOKENS` / `CACHE_SEED` / `RETRY` | 缓存前缀目标长度 / 素材起点 / 最大重试次数 |
 | `EXTRA_BODY` | 透传请求体参数（JSON 字符串） |
@@ -135,7 +136,7 @@ node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":
 | 单流基线 | `-c 1 -r 3 -n 0 -m 512` |
 | 并发扫描 | `for c in 1 4 8 16; do node src/index.js -c $c -r 2 -n 0 -m 512 -o results/sweep/c$c; done` |
 | 最差批次表现 | `--concurrency-mode batch` |
-| 大上下文输入 | `-n 2`（每次随机拼 2 个样本） |
+| 大上下文输入 | `-n 2 --sample-seed 42`（每次按请求序号确定性轮转拼 2 个样本） |
 | 冷/热缓存对比 | `node src/index.js --cache-probe --warmup-mode prefix -c 1 -r 3 --prefix-tokens 4096` |
 | 模型预热后的缓存对比 | `node src/index.js --cache-probe --warmup-mode model -c 1 -r 3`（先预热模型/JIT，再串行 priming 待测前缀） |
 | 干净测量、不重试 | `node src/index.js --cache-probe --retry 0 -c 1 -r 3` |
