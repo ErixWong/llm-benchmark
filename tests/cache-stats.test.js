@@ -13,8 +13,14 @@ const cacheRequest = (cacheIntent, ttft, fields = {}) => ({
 });
 
 const groupedRequests = (coldTtft, warmTtft, fields = {}) => [
-  ...coldTtft.map((ttft) => cacheRequest('miss', ttft, fields)),
-  ...warmTtft.map((ttft) => cacheRequest('hit', ttft, fields))
+  ...coldTtft.map((ttft, index) => cacheRequest('miss', ttft, {
+    requestIndex: index * 2,
+    ...fields
+  })),
+  ...warmTtft.map((ttft, index) => cacheRequest('hit', ttft, {
+    requestIndex: index * 2 + 1,
+    ...fields
+  }))
 ];
 
 describe('cache-stats', () => {
@@ -106,7 +112,7 @@ describe('cache-stats', () => {
       expect(result.warm.n).toBe(0);
     });
 
-    it('uses the same complete-data requests for both token totals and keeps incomplete API data inconclusive', () => {
+    it('uses the same complete-data requests for both token totals and preserves paired evidence', () => {
       const requests = groupedRequests([100, 110, 120], [50, 55, 60]);
       requests.push(
         cacheRequest('miss', null, {
@@ -136,6 +142,7 @@ describe('cache-stats', () => {
       expect(result.server.cachedPromptTokens).toBe(10);
       expect(result.server.promptTokens).toBe(100);
       expect(result.verdict).toBe('benefit');
+      expect(result.reason).toBe('consistent-benefit');
 
       expect(incompleteOnlyResult.server).toEqual({
         cachedPromptTokens: 0,
@@ -144,7 +151,8 @@ describe('cache-stats', () => {
         requestsWithData: 0,
         source: 'api'
       });
-      expect(incompleteOnlyResult.verdict).toBe('inconclusive');
+      expect(incompleteOnlyResult.verdict).toBe('benefit');
+      expect(incompleteOnlyResult.reason).toBe('consistent-benefit');
     });
 
     it('returns empty statistics for the group with no requests', () => {
@@ -156,10 +164,14 @@ describe('cache-stats', () => {
       expect(coldOnly.ttftDeltaMs).toBeNull();
       expect(coldOnly.ttftRatio).toBeNull();
       expect(coldOnly.insufficientSamples).toBe(true);
+      expect(coldOnly.pairDeltas).toEqual([]);
+      expect(coldOnly.pairsTotal).toBe(0);
       expect(warmOnly.cold).toEqual(emptyStats);
       expect(warmOnly.ttftDeltaMs).toBeNull();
       expect(warmOnly.ttftRatio).toBeNull();
       expect(warmOnly.insufficientSamples).toBe(true);
+      expect(warmOnly.pairDeltas).toEqual([]);
+      expect(warmOnly.pairsTotal).toBe(0);
     });
 
     it.each([
@@ -211,6 +223,7 @@ describe('cache-stats', () => {
 
       expect(result.insufficientSamples).toBe(true);
       expect(result.verdict).toBe('inconclusive');
+      expect(result.reason).toBe('insufficient-samples');
     });
 
     it('returns no-benefit when the server reports zero token hit rate despite faster warm TTFT', () => {
@@ -224,6 +237,7 @@ describe('cache-stats', () => {
       expect(result.server.tokenHitRate).toBe(0);
       expect(result.warm.median).toBeLessThan(result.cold.median);
       expect(result.verdict).toBe('no-benefit');
+      expect(result.reason).toBe('server-reports-zero');
     });
 
     it('returns benefit for positive server hit rate and faster warm TTFT', () => {
@@ -235,6 +249,7 @@ describe('cache-stats', () => {
 
       expect(result.server.tokenHitRate).toBe(0.1);
       expect(result.verdict).toBe('benefit');
+      expect(result.reason).toBe('consistent-benefit');
     });
 
     it('returns inconclusive for positive server hit rate without faster warm TTFT', () => {
@@ -245,12 +260,102 @@ describe('cache-stats', () => {
       }));
 
       expect(result.verdict).toBe('inconclusive');
+      expect(result.reason).toBe('inconsistent-pair-deltas');
     });
 
     it('returns no-benefit without server data when warm TTFT is not faster', () => {
       const result = summarizeCache(groupedRequests([50, 55, 60], [100, 110, 120]));
 
       expect(result.verdict).toBe('no-benefit');
+      expect(result.reason).toBe('no-consistent-benefit');
+    });
+
+    it('does not infer benefit from group medians when paired deltas are inconsistent', () => {
+      const result = summarizeCache(groupedRequests(
+        [772, 1686, 2202],
+        [760, 986, 2707]
+      ));
+
+      expect(result.cold.median - result.warm.median).toBe(700);
+      expect(result.pairDeltas).toEqual([-12, -700, 505]);
+      expect(result.pairsFavorable).toBe(2);
+      expect(result.pairsUnfavorable).toBe(1);
+      expect(result.pairedMedianDeltaMs).toBe(-12);
+      expect(result.verdict).toBe('no-benefit');
+      expect(result.reason).toBe('no-consistent-benefit');
+    });
+
+    it('returns benefit when every paired delta is negative', () => {
+      const result = summarizeCache(groupedRequests([100, 110, 120], [90, 100, 110]));
+
+      expect(result.pairDeltas).toEqual([-10, -10, -10]);
+      expect(result.pairsFavorable).toBe(3);
+      expect(result.pairsUnfavorable).toBe(0);
+      expect(result.reason).toBe('consistent-benefit');
+      expect(result.verdict).toBe('benefit');
+    });
+
+    it('sorts each intent group by requestIndex before pairing', () => {
+      const result = summarizeCache([
+        cacheRequest('hit', 60, { requestIndex: 5 }),
+        cacheRequest('miss', 300, { requestIndex: 4 }),
+        cacheRequest('hit', 20, { requestIndex: 1 }),
+        cacheRequest('miss', 100, { requestIndex: 0 }),
+        cacheRequest('miss', 200, { requestIndex: 2 }),
+        cacheRequest('hit', 40, { requestIndex: 3 })
+      ]);
+
+      expect(result.pairDeltas).toEqual([-80, -160, -240]);
+    });
+
+    it('is inconclusive when fewer than three pairs have valid TTFT despite sufficient group samples', () => {
+      const result = summarizeCache(groupedRequests(
+        [null, null, 120, 130, 140],
+        [90, 100, 110]
+      ));
+
+      expect(result.cold.n).toBe(3);
+      expect(result.warm.n).toBe(3);
+      expect(result.pairsTotal).toBe(1);
+      expect(result.insufficientSamples).toBe(true);
+      expect(result.verdict).toBe('inconclusive');
+      expect(result.reason).toBe('insufficient-samples');
+    });
+
+    it('skips a pair when either request has a non-finite TTFT without shifting later pairs', () => {
+      const result = summarizeCache(groupedRequests(
+        [100, null, 120, 130],
+        [90, 80, 110, 120]
+      ));
+
+      expect(result.pairDeltas).toEqual([-10, -10, -10]);
+      expect(result.pairsTotal).toBe(3);
+    });
+
+    it('uses server zero-hit evidence before otherwise consistent paired benefit', () => {
+      const result = summarizeCache(groupedRequests(
+        [100, 110, 120],
+        [90, 100, 110],
+        { cacheSource: 'api', cachedPromptTokens: 0, promptTokens: 100 }
+      ));
+
+      expect(result.pairsUnfavorable).toBe(0);
+      expect(result.server.tokenHitRate).toBe(0);
+      expect(result.verdict).toBe('no-benefit');
+      expect(result.reason).toBe('server-reports-zero');
+    });
+
+    it('is inconclusive when the server reports hits but paired deltas are inconsistent', () => {
+      const result = summarizeCache(groupedRequests(
+        [100, 110, 120],
+        [90, 100, 130],
+        { cacheSource: 'api', cachedPromptTokens: 10, promptTokens: 100 }
+      ));
+
+      expect(result.pairDeltas).toEqual([-10, -10, 10]);
+      expect(result.pairsUnfavorable).toBe(1);
+      expect(result.verdict).toBe('inconclusive');
+      expect(result.reason).toBe('inconsistent-pair-deltas');
     });
 
     it('does not suspect response cache when the run consistently omits usage', () => {

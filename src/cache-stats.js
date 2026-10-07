@@ -50,19 +50,57 @@ export function isTruncated({ outputTokens, maxOutputTokens } = {}) {
  *
  * @param {Array<Object>} requests - 逐请求结果
  * @returns {{cold:Object, warm:Object, ttftDeltaMs:number|null, ttftRatio:number|null,
+ *            pairDeltas:number[], pairsTotal:number, pairsFavorable:number,
+ *            pairsUnfavorable:number, pairsTied:number, pairedMedianDeltaMs:number|null,
  *            insufficientSamples:boolean, server:Object|null,
  *            verdict:'benefit'|'no-benefit'|'inconclusive',
+ *            reason:'insufficient-samples'|'server-reports-zero'|'consistent-benefit'|
+ *                   'inconsistent-pair-deltas'|'no-consistent-benefit',
  *            responseCacheSuspected:number, truncatedRequests:number}}
  */
 export function summarizeCache(requests = []) {
   const successfulRequests = requests.filter((request) => request?.success !== false);
   const coldTtft = [];
   const warmTtft = [];
+  const coldRequests = [];
+  const warmRequests = [];
 
-  for (const request of successfulRequests) {
-    if (typeof request?.ttft !== 'number' || !Number.isFinite(request.ttft)) continue;
-    if (request.cacheIntent === 'miss') coldTtft.push(request.ttft);
-    if (request.cacheIntent === 'hit') warmTtft.push(request.ttft);
+  successfulRequests.forEach((request, originalIndex) => {
+    if (request?.cacheIntent === 'miss') {
+      coldRequests.push({ request, originalIndex });
+      if (typeof request.ttft === 'number' && Number.isFinite(request.ttft)) {
+        coldTtft.push(request.ttft);
+      }
+    }
+    if (request?.cacheIntent === 'hit') {
+      warmRequests.push({ request, originalIndex });
+      if (typeof request.ttft === 'number' && Number.isFinite(request.ttft)) {
+        warmTtft.push(request.ttft);
+      }
+    }
+  });
+
+  const sortByRequestIndex = (entries) => entries.sort((a, b) => {
+    const aIndex = Number.isFinite(a.request.requestIndex)
+      ? a.request.requestIndex
+      : a.originalIndex;
+    const bIndex = Number.isFinite(b.request.requestIndex)
+      ? b.request.requestIndex
+      : b.originalIndex;
+    return aIndex - bIndex;
+  });
+  sortByRequestIndex(coldRequests);
+  sortByRequestIndex(warmRequests);
+
+  const pairDeltas = [];
+  const pairCount = Math.min(coldRequests.length, warmRequests.length);
+  for (let index = 0; index < pairCount; index += 1) {
+    const cold = coldRequests[index].request.ttft;
+    const warm = warmRequests[index].request.ttft;
+    if (typeof cold === 'number' && Number.isFinite(cold)
+      && typeof warm === 'number' && Number.isFinite(warm)) {
+      pairDeltas.push(warm - cold);
+    }
   }
 
   const summarize = (values) => {
@@ -93,7 +131,14 @@ export function summarizeCache(requests = []) {
   const ttftRatio = cold.median !== null && warm.median !== null && warm.median !== 0
     ? cold.median / warm.median
     : null;
-  const insufficientSamples = cold.n < MIN_SAMPLES || warm.n < MIN_SAMPLES;
+  const pairsTotal = pairDeltas.length;
+  const pairsFavorable = pairDeltas.filter((delta) => delta < 0).length;
+  const pairsUnfavorable = pairDeltas.filter((delta) => delta > 0).length;
+  const pairsTied = pairDeltas.filter((delta) => delta === 0).length;
+  const pairedMedianDeltaMs = summarize(pairDeltas).median;
+  const insufficientSamples = cold.n < MIN_SAMPLES
+    || warm.n < MIN_SAMPLES
+    || pairsTotal < MIN_SAMPLES;
 
   const apiRequests = successfulRequests.filter((request) => request?.cacheSource === 'api');
   let server = null;
@@ -121,20 +166,22 @@ export function summarizeCache(requests = []) {
   }
 
   let verdict;
+  let reason;
   if (insufficientSamples) {
     verdict = 'inconclusive';
-  } else if (server !== null && server.requestsWithData > 0) {
-    if (server.tokenHitRate === 0) {
-      verdict = 'no-benefit';
-    } else if (server.tokenHitRate > 0 && warm.median < cold.median) {
-      verdict = 'benefit';
-    } else {
-      verdict = 'inconclusive';
-    }
-  } else if (server === null) {
-    verdict = warm.median < cold.median ? 'benefit' : 'no-benefit';
-  } else {
+    reason = 'insufficient-samples';
+  } else if (server !== null && server.requestsWithData > 0 && server.tokenHitRate === 0) {
+    verdict = 'no-benefit';
+    reason = 'server-reports-zero';
+  } else if (pairsUnfavorable === 0 && pairsTotal > 0 && pairedMedianDeltaMs < 0) {
+    verdict = 'benefit';
+    reason = 'consistent-benefit';
+  } else if (server !== null && server.requestsWithData > 0 && server.tokenHitRate > 0) {
     verdict = 'inconclusive';
+    reason = 'inconsistent-pair-deltas';
+  } else {
+    verdict = 'no-benefit';
+    reason = 'no-consistent-benefit';
   }
 
   const usageSeenInRun = successfulRequests.some((request) => request?.hasUsage === true);
@@ -154,9 +201,16 @@ export function summarizeCache(requests = []) {
     warm,
     ttftDeltaMs,
     ttftRatio,
+    pairDeltas,
+    pairsTotal,
+    pairsFavorable,
+    pairsUnfavorable,
+    pairsTied,
+    pairedMedianDeltaMs,
     insufficientSamples,
     server,
     verdict,
+    reason,
     responseCacheSuspected,
     truncatedRequests
   };

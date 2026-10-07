@@ -15,6 +15,7 @@ export function selectDocuments(sortedFiles, unitIndex, seedOffset) {
 
 /**
  * 为每个缓存单元按冷请求、热请求的顺序生成计时请求计划。
+ * 按计划顺序第 i 个 miss 与第 i 个 hit 属于同一单元，应作为一对比较。
  * @param {Array<{cold:string,warm:string}>} units - 缓存探测单元
  * @returns {Array<{text:string,intent:'miss'|'hit'}>} 计时请求计划
  */
