@@ -44,6 +44,8 @@ export function validateBank(bank) {
     }
     if (typeof item.id !== 'string' || item.id.trim() === '') {
       errors.push(`${label}的 id 必须是非空字符串`);
+    } else if (item.id !== item.id.trim()) {
+      errors.push(`${label}的 id 不得包含首尾空白`);
     } else if (seenIds.has(item.id)) {
       errors.push(`${label}的 id 重复`);
     } else {
@@ -70,6 +72,20 @@ export function validateBank(bank) {
   return { ok: errors.length === 0, errors };
 }
 
+function sortObjectKeys(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortObjectKeys);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map(key => [key, sortObjectKeys(value[key])])
+  );
+}
+
 /**
  * Create a short SHA-256 fingerprint for the full bank content.
  * @param {object} bank - Bank data
@@ -78,7 +94,7 @@ export function validateBank(bank) {
 export function hashBank(bank) {
   const { hash, ...content } = bank;
   return createHash('sha256')
-    .update(JSON.stringify(content))
+    .update(JSON.stringify(sortObjectKeys(content)))
     .digest('hex')
     .slice(0, 12);
 }

@@ -57,6 +57,53 @@ describe('validateBank', () => {
       '题库 items 必须是非空数组'
     );
   });
+
+  it('rejects IDs with leading or trailing whitespace', () => {
+    const bank = makeBank();
+    bank.items[0].id = ' item ';
+
+    const result = validateBank(bank);
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain('条目 #1（id=" item "）的 id 不得包含首尾空白');
+  });
+
+  it('treats surrounding prompt whitespace as non-empty prompt content', () => {
+    const bank = makeBank();
+    bank.items[0].prompt = '  prompt a1  ';
+
+    expect(validateBank(bank)).toEqual({ ok: true, errors: [] });
+  });
+});
+
+describe('hashBank', () => {
+  it('ignores recursive object key order but preserves array order', () => {
+    const a = {
+      name: 'x',
+      version: 1,
+      items: [{
+        id: 'a',
+        prompt: 'p',
+        expected: { contentTokens: 1, text: 't' },
+        tags: { genre: 'g' }
+      }]
+    };
+    const b = {
+      items: [{
+        tags: { genre: 'g' },
+        expected: { text: 't', contentTokens: 1 },
+        prompt: 'p',
+        id: 'a'
+      }],
+      version: 1,
+      name: 'x'
+    };
+    const reorderedItems = makeBank();
+    reorderedItems.items.reverse();
+
+    expect(hashBank(a)).toBe(hashBank(b));
+    expect(hashBank(makeBank())).not.toBe(hashBank(reorderedItems));
+    expect(hashBank({ ...a, hash: 'derived-hash' })).toBe(hashBank(a));
+  });
 });
 
 describe('loadBank', () => {
