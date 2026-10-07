@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- JSON 报告新增始终存在的 `metrics.diagnostics`，统一记录所有运行模式的截断与疑似响应级缓存诊断；
+  `metrics.cache` 中的既有诊断字段保留且与通用字段数值一致。`metricsVersion` 升至 `1.2`
+  （仅新增字段，非 BREAKING）。Markdown 配置表补充 API URL、超时、样本数、`--extra-body`
+  与缓存探针复现参数；三种报告统一展示诊断提示、低样本 TPS 提示及 UTC+8 时间
 - `--cache-probe` 冷/热缓存探针：串行预热前缀、交错测量 cold/warm，并在 `metrics.cache`
   与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要；缓存 `verdict`
   根据按单元配对的 TTFT 差值判定，而非冷热组中位数，并提供配对摘要与 `reason` 原因码。
