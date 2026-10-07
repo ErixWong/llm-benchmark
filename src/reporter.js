@@ -78,7 +78,9 @@ function appendCacheMarkdown(lines, cache, config) {
   lines.push('| 指标 | 值 |');
   lines.push('|------|-----|');
   lines.push(`| 冷组 TTFT 中位数 | ${formatCacheLatency(cold.median)}（n=${cold.n ?? 0}）|`);
+  lines.push(`| 冷组 TTFT min / max | ${formatCacheLatency(cold.min)} / ${formatCacheLatency(cold.max)} |`);
   lines.push(`| 热组 TTFT 中位数 | ${formatCacheLatency(warm.median)}（n=${warm.n ?? 0}）|`);
+  lines.push(`| 热组 TTFT min / max | ${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)} |`);
   lines.push(`| 冷-热 TTFT 差值（中位数之差） | ${formatCacheDelta(cache.ttftDeltaMs)} |`);
   lines.push(`| 冷/热 TTFT 倍数 | ${formatCacheRatio(cache.ttftRatio)} |`);
   lines.push(`| 判定 | ${cacheVerdictLabel(cache.verdict)} |`);
@@ -107,7 +109,9 @@ function generateCacheHtml(cache, config) {
     : `${(server.tokenHitRate * 100).toFixed(2)}%`;
   const rows = [
     ['冷组 TTFT 中位数', `${formatCacheLatency(cold.median)}（n=${cold.n ?? 0}）`],
+    ['冷组 TTFT min / max', `${formatCacheLatency(cold.min)} / ${formatCacheLatency(cold.max)}`],
     ['热组 TTFT 中位数', `${formatCacheLatency(warm.median)}（n=${warm.n ?? 0}）`],
+    ['热组 TTFT min / max', `${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)}`],
     ['冷-热 TTFT 差值（中位数之差）', formatCacheDelta(cache.ttftDeltaMs)],
     ['冷/热 TTFT 倍数', formatCacheRatio(cache.ttftRatio)],
     ['判定', cacheVerdictLabel(cache.verdict)],

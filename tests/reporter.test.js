@@ -246,7 +246,9 @@ describe('reporter', () => {
         const { md, html } = await readReport(dir);
         expect(md).toContain('### 缓存命中');
         expect(md).toContain('120 ms（n=3）');
+        expect(md).toContain('冷组 TTFT min / max | 110 ms / 130 ms');
         expect(md).toContain('20 ms（n=3）');
+        expect(md).toContain('热组 TTFT min / max | 15 ms / 25 ms');
         expect(md).toContain('冷-热 TTFT 差值（中位数之差）');
         expect(md).toContain('6.00×');
         expect(md).toContain('观察到缓存收益');
