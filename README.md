@@ -86,6 +86,7 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `tps` | 单请求解码速度（不含 TTFT） |
 | `throughputTps` | 系统级吞吐：总输出 token ÷ 墙钟时间 |
 | `cache` | 仅在 `--cache-probe` 时出现：冷/热 TTFT、逐单元配对差值、服务端上报的缓存 token 命中率与判定 |
+| `diagnostics` | **始终存在**：截断请求数与疑似响应级缓存请求数（诊断线索，非缓存命中证明） |
 
 ### 指标口径
 

@@ -32,6 +32,11 @@ npm run benchmark              # 等价于 node src/index.js
 | `src/context-generator.js` | 输入上下文生成与 token 计数 |
 | `src/http-client.js` | axios 实例：keep-alive、重试、超时、URL 规范化 |
 | `src/reporter.js` | 报告生成（JSON / Markdown / HTML）与转义 |
+| `src/cache-source.js` | 探针素材构造：按标题边界切片、前缀/后缀拼装、素材库指纹 |
+| `src/cache-plan.js` | 探针请求计划：按种子环序选取单元文档、生成 cold/warm 计划 |
+| `src/cache-probe.js` | 探针编排：运行盐、冷/热单元构造、前缀唯一性校验与前置检查 |
+| `src/cache-stats.js` | 探针统计与诊断纯函数：服务端缓存 usage、截断/疑似响应缓存诊断、冷热配对判定 |
+| `src/sample-select.js` | `-n N` 的确定性样本选取（seeded 环序轮转） |
 
 ## 硬性约定
 

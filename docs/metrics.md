@@ -136,6 +136,11 @@ JSON 报告 `tokenSpeed.config.bank` 记录探针素材库来源与整体指纹�
 `hash` 是按稳定文件顺序对完整素材文本（不含运行 nonce / runSalt）计算的 12 位 SHA-256
 摘要，用于识别素材文本变化。
 
+JSON 报告 `tokenSpeed.config` 还记录**输入素材的可复现性**：`sampleSeed`（`--sample-seed`，默认 42）、
+`sampleFiles`（排序后的候选文件）与 `sampleSelections`（逐请求选中的文件）。相同素材集 + 相同 seed
++ 相同请求序号 ⇒ 选中相同文件；`-n 0` 时不产生这些字段（不使用文件素材）。**注意**：`-n N` 的选取
+口径已于 2026-10 从随机洗牌改为确定性环序轮转，与更早的报告对比时素材可能不同。
+
 `--prefix-tokens` 是客户端 tokenizer 口径的目标值，服务端实际 `prompt_tokens` 可能明显不同（不同 tokenizer 的实测差异可达 30%）；报告中的 `promptTokens` 一律以服务端 usage 为准。两种来源不可混算，沿用“不同来源不得相减”。
 
 JSON 报告的 `raw[]` 新增以下可选逐请求诊断字段（旧报告可能没有这些字段；`cacheIntent` /
