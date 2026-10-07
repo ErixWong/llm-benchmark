@@ -5,10 +5,12 @@
 
 import chalk from 'chalk';
 import ora from 'ora';
+import { randomUUID } from 'node:crypto';
 import { generateContext, countMessagesTokens, validateContext } from './context-generator.js';
 import { createHttpClient, validateParams, tokenSpeedTestRules, normalizeApiUrl, getDefaultTimeout } from './http-client.js';
 import { computeTokenStats } from './token-stats.js';
 import { sanitizeExtraBody } from './extra-body.js';
+import { extractCacheUsage, summarizeCache } from './cache-stats.js';
 
 /**
  * 运行LLM基准测试
@@ -34,7 +36,14 @@ export async function runLlmBenchmarkTest(options) {
     sampleCount = 0,  // 选取多少个8k sample组成上下文
     timeout = getDefaultTimeout(),  // 请求超时时间（毫秒）
     extraBody = null,  // 附加请求体参数（如 chat_template_kwargs）
-    quiet = false  // 静默模式
+    quiet = false,  // 静默模式
+    requestPlan = null,
+    cacheProbe = null,
+    warmupMode = 'auto',
+    cacheSeed,
+    prefixTokens,
+    runSalt,
+    retry = 3
   } = options;
 
   // 统一获取 User-Agent
@@ -62,6 +71,7 @@ export async function runLlmBenchmarkTest(options) {
   const httpClient = createHttpClient({
     baseURL: url, // createHttpClient会自动规范化
     timeout: timeout,  // 使用传入的超时参数
+    retryConfig: { maxRetries: retry },
     headers: {
       'User-Agent': userAgent,
       ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
@@ -73,11 +83,21 @@ export async function runLlmBenchmarkTest(options) {
   // 2. inputTexts数组：每个请求使用不同的输入（避免缓存命中）
   // 3. inputText：所有请求使用相同输入
   // 4. 自动生成：所有请求使用相同的自动生成上下文
-  let useDynamicGeneration = !!generateInputText;
+  const useDynamicGeneration = !requestPlan && !!generateInputText;
   let contextMessagesList = [];  // 每个请求的消息数组（非动态模式使用）
   let actualTokens = 0;
   
-  if (generateInputText) {
+  if (requestPlan) {
+    if (requestPlan.length !== samples) {
+      throw new Error(`requestPlan 长度 (${requestPlan.length}) 必须等于计时请求数 (${samples})`);
+    }
+    const firstText = requestPlan[0]?.text ?? '';
+    actualTokens = countMessagesTokens([{ role: 'user', content: firstText }]);
+    console.log(chalk.cyan('\n🔧 测试配置:'));
+    console.log(`  模型: ${model}`);
+    console.log(`  输入来源: 缓存探针请求计划 (${requestPlan.length} 个请求)`);
+    console.log(`  输入Token数: ${actualTokens} (首个请求)`);
+  } else if (generateInputText) {
     // 动态生成模式：每次请求时生成新的输入
     console.log(chalk.cyan('\n🔧 测试配置:'));
     console.log(`  模型: ${model}`);
@@ -147,8 +167,64 @@ export async function runLlmBenchmarkTest(options) {
   console.log(`  并发模式: ${concurrencyMode === 'pipeline' ? '流水线' : '批次'}`);
   console.log(`  采样次数: ${samples}`);
 
-  // 预热请求
-  if (warmupRequests > 0) {
+  // 探针预热按单元串行执行，确保计时请求开始前所有待测前缀已预置。
+  if (cacheProbe) {
+    const mode = cacheProbe.warmupMode === 'auto' ? 'prefix' : cacheProbe.warmupMode;
+    if (mode === 'prefix') {
+      const warmupSpinner = ora(`执行缓存前缀预热 (0/${cacheProbe.units.length})...`).start();
+      for (let i = 0; i < cacheProbe.units.length; i++) {
+        warmupSpinner.text = `执行缓存前缀预热 (${i + 1}/${cacheProbe.units.length})...`;
+        try {
+          const result = await measureTokenSpeed(
+            httpClient,
+            normalizedUrl,
+            userAgent,
+            model,
+            [{ role: 'user', content: cacheProbe.units[i].primed }],
+            1,
+            extraBody
+          );
+          if (!result.success) {
+            throw new Error(`缓存前缀预热请求 #${i + 1} 未成功`);
+          }
+        } catch (error) {
+          warmupSpinner.fail(`缓存前缀预热失败 (${i + 1}/${cacheProbe.units.length})`);
+          throw error;
+        }
+      }
+      warmupSpinner.succeed('缓存前缀预热完成');
+    } else if (mode === 'model') {
+      const modelWarmupText = `[c-model-warmup-${randomUUID()}] 请回复 ok`;
+      await measureTokenSpeed(
+        httpClient,
+        normalizedUrl,
+        userAgent,
+        model,
+        [{ role: 'user', content: modelWarmupText }],
+        1,
+        extraBody
+      );
+      console.log(chalk.gray('模型/JIT 预热完成（未预热待测前缀）'));
+    } else if (mode !== 'none') {
+      throw new Error(`无效的缓存探针预热模式: ${mode}`);
+    }
+  } else if (warmupMode === 'prefix') {
+    throw new Error('warmup-mode prefix 需要启用 --cache-probe');
+  } else if (warmupMode === 'model') {
+    const modelWarmupText = `[c-model-warmup-${randomUUID()}] 请回复 ok`;
+    await measureTokenSpeed(
+      httpClient,
+      normalizedUrl,
+      userAgent,
+      model,
+      [{ role: 'user', content: modelWarmupText }],
+      1,
+      extraBody
+    );
+    console.log(chalk.gray('模型/JIT 预热完成'));
+  } else if (warmupMode === 'none') {
+    // 显式跳过预热请求。
+  } else if (warmupMode === 'auto' && warmupRequests > 0) {
     const warmupSpinner = ora(`执行 ${warmupRequests} 次预热请求...`).start();
     for (let i = 0; i < warmupRequests; i++) {
       try {
@@ -176,11 +252,24 @@ export async function runLlmBenchmarkTest(options) {
 
   // 辅助函数：获取指定请求的消息（支持动态生成）
   const getMessagesForRequest = async (requestIndex) => {
+    if (requestPlan) {
+      const plannedRequest = requestPlan[requestIndex];
+      if (!plannedRequest) {
+        throw new Error(`requestPlan 缺少第 ${requestIndex + 1} 条计时请求`);
+      }
+      return {
+        messages: [{ role: 'user', content: plannedRequest.text }],
+        intent: plannedRequest.intent
+      };
+    }
     if (useDynamicGeneration) {
       const text = await generateInputText();
-      return [{ role: 'user', content: text }];
+      return { messages: [{ role: 'user', content: text }], intent: undefined };
     }
-    return contextMessagesList[requestIndex % contextMessagesList.length];
+    return {
+      messages: contextMessagesList[requestIndex % contextMessagesList.length],
+      intent: undefined
+    };
   };
 
   // 执行测试 - 支持batch和pipeline两种并发模式
@@ -197,7 +286,7 @@ export async function runLlmBenchmarkTest(options) {
     
     const runRequest = async (requestIndex) => {
       const requestSendTime = Date.now();
-      const messages = await getMessagesForRequest(requestIndex);
+      const { messages, intent } = await getMessagesForRequest(requestIndex);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -211,7 +300,8 @@ export async function runLlmBenchmarkTest(options) {
           ...result,
           requestIndex,
           requestSendTime,
-          responseReceiveTime: Date.now()
+          responseReceiveTime: Date.now(),
+          ...(intent ? { cacheIntent: intent } : {})
         };
       } catch (error) {
         completed++;
@@ -225,7 +315,8 @@ export async function runLlmBenchmarkTest(options) {
           error: error.message,
           requestIndex,
           requestSendTime,
-          responseReceiveTime: Date.now()
+          responseReceiveTime: Date.now(),
+          ...(intent ? { cacheIntent: intent } : {})
         };
       }
     };
@@ -277,7 +368,7 @@ export async function runLlmBenchmarkTest(options) {
         
         batchPromises.push(
           (async () => {
-            const messages = await getMessagesForRequest(currentRequestIndex);
+            const { messages, intent } = await getMessagesForRequest(currentRequestIndex);
             try {
               const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
               completed++;
@@ -289,7 +380,8 @@ export async function runLlmBenchmarkTest(options) {
                 ...result,
                 requestIndex: currentRequestIndex,
                 requestSendTime,
-                responseReceiveTime: Date.now()
+                responseReceiveTime: Date.now(),
+                ...(intent ? { cacheIntent: intent } : {})
               };
             } catch (error) {
               completed++;
@@ -302,7 +394,8 @@ export async function runLlmBenchmarkTest(options) {
                 error: error.message,
                 requestIndex: currentRequestIndex,
                 requestSendTime,
-                responseReceiveTime: Date.now()
+                responseReceiveTime: Date.now(),
+                ...(intent ? { cacheIntent: intent } : {})
               };
             }
           })()
@@ -317,7 +410,7 @@ export async function runLlmBenchmarkTest(options) {
     for (let i = 0; i < samples; i++) {
       spinner.text = `执行Token速度测试 (${i + 1}/${samples})`;
       const requestSendTime = Date.now();
-      const messages = await getMessagesForRequest(i);
+      const { messages, intent } = await getMessagesForRequest(i);
       
       try {
         const result = await measureTokenSpeed(httpClient, normalizedUrl, userAgent, model, messages, maxOutputTokens, extraBody);
@@ -328,7 +421,8 @@ export async function runLlmBenchmarkTest(options) {
           ...result,
           requestIndex: i,
           requestSendTime,
-          responseReceiveTime: Date.now()
+          responseReceiveTime: Date.now(),
+          ...(intent ? { cacheIntent: intent } : {})
         });
       } catch (error) {
         logRequestCompletion(i + 1, samples, { error: error.message }, true, i + 1);
@@ -338,7 +432,8 @@ export async function runLlmBenchmarkTest(options) {
           error: error.message,
           requestIndex: i,
           requestSendTime,
-          responseReceiveTime: Date.now()
+          responseReceiveTime: Date.now(),
+          ...(intent ? { cacheIntent: intent } : {})
         });
       }
     }
@@ -352,14 +447,34 @@ export async function runLlmBenchmarkTest(options) {
     model,  // 添加模型名称
     url,    // 添加API URL
     inputTokens: actualTokens,  // 使用实际计算的token数
-    inputTextUsed: !!(inputText || inputTexts),  // 标记是否使用了输入文本
+    inputTextUsed: !!(inputText || inputTexts || requestPlan),  // 标记是否使用了输入文本
     maxOutputTokens,
     concurrency,
     concurrencyMode,
     samples,
     totalTime,
     sampleCount,
-    uniqueInputs: contextMessagesList.length  // 记录不同输入的数量
+    uniqueInputs: requestPlan
+      ? new Set(requestPlan.map(request => request.text)).size
+      : contextMessagesList.length,  // 记录不同输入的数量
+    ...(cacheProbe ? {
+      cacheProbe: true,
+      warmupMode: cacheProbe.warmupMode,
+      cacheSeed,
+      runSalt,
+      prefixTokens,
+      suffix: cacheProbe.suffix,
+      order: cacheProbe.order,
+      units: cacheProbe.units.map(unit => ({
+        unitIndex: unit.unitIndex,
+        itemId: unit.itemId,
+        prefixHash: unit.prefixHash,
+        prefixTokens: unit.prefixTokens
+      })),
+      prefixValidation: cacheProbe.prefixValidation
+    } : {}),
+    ...(!cacheProbe && warmupMode !== 'auto' ? { warmupMode } : {}),
+    ...(cacheProbe || retry !== 3 ? { retry } : {})
   });
 
   // 打印摘要
@@ -496,8 +611,9 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
         const { outputTokens, contentTokens, reasoningTokens, tokenSource, reasoningTokenSource } =
           computeTokenStats({ outputText, reasoningText, apiUsage });
         // 输入token优先使用API返回值
-        const inputTokensActual = apiUsage?.prompt_tokens 
+        const promptTokens = apiUsage?.prompt_tokens
           ?? countMessagesTokens(messages);
+        const { cachedPromptTokens, source: cacheSource } = extractCacheUsage(apiUsage, promptTokens);
         const generationTime = firstTokenTime ? requestEnd - firstTokenTime : 0;
         const tps = outputTokens > 0 && generationTime > 0
           ? (outputTokens / (generationTime / 1000)).toFixed(2)
@@ -511,7 +627,12 @@ async function measureTokenSpeed(httpClient, url, userAgent, model, messages, ma
           outputTokens,
           reasoningTokens,
           contentTokens,
-          inputTokens: inputTokensActual,
+          inputTokens: promptTokens,
+          promptTokens,
+          cachedPromptTokens,
+          cacheSource,
+          hasUsage: apiUsage !== null,
+          retries: response.config?.__retryCount ?? 0,
           generationTime,
           tps: parseFloat(tps),
           outputText,
@@ -566,7 +687,8 @@ function processTokenSpeedResult(results, config) {
       config,
       success: false,
       error: 'All requests failed',
-      failedCount: failedResults.length
+      failedCount: failedResults.length,
+      ...(config.cacheProbe ? { metrics: { cache: summarizeCache(successResults) } } : {})
     };
   }
 
@@ -638,7 +760,8 @@ function processTokenSpeedResult(results, config) {
         min: safeMin(requestTimeValues),
         max: safeMax(requestTimeValues),
         median: median(requestTimeValues)
-      }
+      },
+      ...(config.cacheProbe ? { cache: summarizeCache(successResults) } : {})
     },
     errors: {
       total: failedResults.length,
@@ -702,6 +825,9 @@ function printTokenSpeedSummary(result) {
   console.log('─'.repeat(50));
 
   if (!result.success) {
+    if (result.metrics?.cache) {
+      printCacheSummary(result.metrics.cache, result.config);
+    }
     console.log(chalk.red('❌ 测试失败:'), result.error);
     return;
   }
@@ -746,7 +872,37 @@ function printTokenSpeedSummary(result) {
   const errorColor = errorRate < 1 ? 'green' : errorRate < 5 ? 'yellow' : 'red';
   console.log(`  错误率: ${chalk[errorColor](errorRate + '%')}`);
   console.log(`  总错误: ${result.errors.total}/${result.config.samples}`);
+  if (result.metrics.cache) {
+    printCacheSummary(result.metrics.cache, result.config);
+  }
   console.log('─'.repeat(50));
+}
+
+function printCacheSummary(cache, config) {
+  const medianText = (value) => value === null ? 'N/A' : formatLatency(value);
+  const deltaText = cache.ttftDeltaMs === null
+    ? 'N/A'
+    : `${cache.ttftDeltaMs >= 0 ? '+' : '-'}${formatLatency(Math.abs(cache.ttftDeltaMs))}`;
+  const ratioText = cache.ttftRatio === null ? 'N/A' : `${cache.ttftRatio.toFixed(2)}×`;
+  const serverHitRate = cache.server?.tokenHitRate == null
+    ? 'N/A'
+    : `${(cache.server.tokenHitRate * 100).toFixed(2)}%`;
+  const coveredRequests = cache.server?.requestsWithData ?? 0;
+  const prefixValidation = config.prefixValidation;
+  const unitCount = config.units?.length ?? 0;
+
+  console.log(chalk.cyan('\n缓存命中探针:'));
+  console.log(`  冷组 TTFT 中位数: ${medianText(cache.cold.median)} (n=${cache.cold.n})`);
+  console.log(`  热组 TTFT 中位数: ${medianText(cache.warm.median)} (n=${cache.warm.n})`);
+  console.log(`  冷-热差值: ${deltaText}`);
+  console.log(`  冷/热倍数: ${ratioText}`);
+  console.log(`  Verdict: ${cache.verdict}`);
+  console.log(`  服务端命中率: ${serverHitRate}；覆盖请求: ${coveredRequests}/${config.samples}`);
+  console.log(`  前缀自检: 唯一性 ${prefixValidation?.unique?.ok ? '通过' : '失败'}；`
+    + `预热前缀匹配 ${prefixValidation?.verified ?? 0}/${unitCount}`);
+  if (cache.insufficientSamples) {
+    console.log(chalk.yellow('  样本不足，不做结论'));
+  }
 }
 
 /**
