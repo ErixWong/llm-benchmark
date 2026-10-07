@@ -41,6 +41,8 @@ export async function createMockSseServer({
 
   const requests = [];
   const seenPrefixes = new Set();
+  let inFlight = 0;
+  let maxConcurrent = 0;
   const server = createServer((request, response) => {
     const chunks = [];
     request.on('data', (chunk) => chunks.push(chunk));
@@ -53,6 +55,17 @@ export async function createMockSseServer({
         response.end(JSON.stringify({ error: 'Request body must be JSON' }));
         return;
       }
+
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      let released = false;
+      const releaseRequest = () => {
+        if (released) return;
+        inFlight--;
+        released = true;
+      };
+      response.once('finish', releaseRequest);
+      response.once('close', releaseRequest);
 
       const firstUserContent = body.messages?.find((message) => message.role === 'user')?.content;
       const prefix = prefixes.find((candidate) => firstUserContent?.startsWith(candidate));
@@ -127,6 +140,9 @@ export async function createMockSseServer({
   return {
     url: `http://127.0.0.1:${address.port}/v1`,
     requests,
+    get maxConcurrent() {
+      return maxConcurrent;
+    },
     close: () => new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
       server.closeAllConnections?.();

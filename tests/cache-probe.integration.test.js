@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { hashMaterialBank } from '../src/cache-source.js';
 import { buildProbeUnits, checkUniquePrefixes, verifyPrefix } from '../src/cache-probe.js';
 import { buildRequestPlan } from '../src/cache-plan.js';
 import { runLlmBenchmarkTest } from '../src/llm-benchmark.js';
@@ -37,6 +38,7 @@ function makeProbe(warmupMode = 'prefix') {
       warmupMode,
       order: 'cold-warm',
       runSalt: RUN_SALT,
+      bank: { name: 'chunked-samples', hash: hashMaterialBank(MATERIALS) },
       prefixValidation
     }
   };
@@ -48,6 +50,8 @@ async function runProbe(
     maxOutputTokens = 4,
     completionTokens = 1,
     warmupMode = 'prefix',
+    concurrency = 1,
+    concurrencyMode = 'batch',
     failContents = []
   } = {}
 ) {
@@ -68,8 +72,8 @@ async function runProbe(
       url: server.url,
       model: 'mock-model',
       samples: probe.requestPlan.length,
-      concurrency: 1,
-      concurrencyMode: 'batch',
+      concurrency,
+      concurrencyMode,
       maxOutputTokens,
       timeout: 3000,
       retry: 0,
@@ -169,6 +173,38 @@ describe('cache-probe integration', () => {
     expect(run.server.requests.filter((request) => request.cacheHit)).toHaveLength(run.units.length);
     expect(run.consoleText).toContain('缓存命中探针:');
   });
+
+  it.each(['pipeline', 'batch'])(
+    'concurrency=2 的 %s 并发分支保留配对元数据且先完成全部预热',
+    async (concurrencyMode) => {
+      const run = await runProbe('cache-aware', {
+        concurrency: 2,
+        concurrencyMode
+      });
+      activeServer = run.server;
+      const unitCount = run.units.length;
+      const timedRequests = run.server.requests.slice(unitCount);
+      const orderedResults = [...run.results.raw]
+        .sort((left, right) => left.requestIndex - right.requestIndex);
+
+      expect(run.server.maxConcurrent).toBeGreaterThanOrEqual(2);
+      expect(run.server.requests.slice(0, unitCount).map((request) => request.firstUserContent))
+        .toEqual(run.units.map((unit) => unit.primed));
+      expect(timedRequests).toHaveLength(run.requestPlan.length);
+      expect(timedRequests.map((request) => request.firstUserContent).sort())
+        .toEqual(run.requestPlan.map((request) => request.text).sort());
+      expect(run.server.requests).toHaveLength(unitCount + run.requestPlan.length);
+
+      expect(orderedResults.map((request) => request.cacheIntent))
+        .toEqual(run.requestPlan.map((request) => request.intent));
+      expect(orderedResults.map((request) => request.cacheUnitIndex))
+        .toEqual(run.requestPlan.map((request) => request.unitIndex));
+      expect(orderedResults.map((request) => request.cacheUnitIndex))
+        .toEqual(run.units.flatMap((unit) => [unit.unitIndex, unit.unitIndex]));
+      expect(run.results.metrics.cache.pairDeltas).toHaveLength(unitCount);
+      expect(run.results.metrics.cache.verdict).toBe('benefit');
+    }
+  );
 
   it('no-usage 的行为对比不依赖客户端 token 估算且不误报响应缓存', async () => {
     const run = await runProbe('no-usage');
@@ -302,6 +338,10 @@ describe('cache-probe integration', () => {
       prefixHash: unit.prefixHash,
       prefixTokens: unit.prefixTokens
     })));
+    expect(run.results.config.bank).toEqual({
+      name: 'chunked-samples',
+      hash: hashMaterialBank(MATERIALS)
+    });
     expect(run.results.config.prefixValidation).toEqual(run.prefixValidation);
     expect(run.results.raw.map((request) => request.cacheIntent))
       .toEqual(run.requestPlan.map((request) => request.intent));
