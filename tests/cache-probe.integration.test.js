@@ -143,13 +143,26 @@ describe('cache-probe integration', () => {
     expect(cache.responseCacheSuspected).toBe(0);
   });
 
-  it('usage 缺少缓存字段时将命中率记为 0 并判定无收益', async () => {
+  it('usage 缺少缓存字段时 server 为 null 且按冷热 TTFT 行为判定', async () => {
     const run = await runProbe('usage-no-cache');
     activeServer = run.server;
     const cache = run.results.metrics.cache;
 
+    expect(cache.server).toBeNull();
+    expect(cache.verdict).toBe('benefit');
+    expect(cache.warm.median).toBeLessThan(cache.cold.median);
+    expect(cache.responseCacheSuspected).toBe(0);
+  });
+
+  it('显式 cached_tokens: 0 时以服务端零命中为准，即使 warm TTFT 更低', async () => {
+    const run = await runProbe('usage-explicit-zero-cache');
+    activeServer = run.server;
+    const cache = run.results.metrics.cache;
+
+    expect(cache.server).not.toBeNull();
     expect(cache.server.requestsWithData).toBeGreaterThan(0);
     expect(cache.server.tokenHitRate).toBe(0);
+    expect(cache.warm.median).toBeLessThan(cache.cold.median);
     expect(cache.verdict).toBe('no-benefit');
   });
 

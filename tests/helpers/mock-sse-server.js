@@ -1,6 +1,11 @@
 import { createServer } from 'node:http';
 
-const VALID_MODES = new Set(['no-usage', 'usage-no-cache', 'cache-aware']);
+const VALID_MODES = new Set([
+  'no-usage',
+  'usage-no-cache',
+  'usage-explicit-zero-cache',
+  'cache-aware'
+]);
 
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -10,7 +15,7 @@ function sleep(milliseconds) {
  * 启动仅供测试使用的本地 OpenAI-compatible SSE 服务。
  *
  * @param {{
- *   mode?:'no-usage'|'usage-no-cache'|'cache-aware',
+ *   mode?:'no-usage'|'usage-no-cache'|'usage-explicit-zero-cache'|'cache-aware',
  *   prefixes?:string[],
  *   hitDelayMs?:number,
  *   missDelayMs?:number,
@@ -76,6 +81,8 @@ export async function createMockSseServer({
             usage.prompt_tokens_details = {
               cached_tokens: cacheHit ? promptTokens - 100 : 0
             };
+          } else if (mode === 'usage-explicit-zero-cache') {
+            usage.prompt_tokens_details = { cached_tokens: 0 };
           }
           response.write(`data: ${JSON.stringify({
             choices: [{ delta: {} }],

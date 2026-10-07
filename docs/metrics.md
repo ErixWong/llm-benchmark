@@ -107,7 +107,9 @@ node src/index.js --extra-body '{"stream_options":{"include_usage":false}}'
 
 1. **缓存命中率只依据服务端 usage**。服务端没有提供可用的 prompt/缓存 token 数据时，
    命中率是 unknown（`server: null`），绝不使用客户端 tokenizer 或冷热延迟估算命中率。
-   服务端报告 prompt token usage 但不提供缓存字段时，缓存 token 按 0 汇总；这不是客户端估算。
+   服务端报告 `usage` 但**不含任何缓存字段**时，缓存命中率是 unknown（`server: null`），
+   不能按 0 处理——“没有上报”与“上报了 0 命中”是两回事。只有服务端**显式**返回
+   `cached_tokens: 0`（或等价字段为 0）时，才按 0 汇总并给出 `tokenHitRate: 0`。
 2. `ttftDeltaMs` 只是两组 TTFT **中位数之差**，不是 prefill 耗时。warm 组 TTFT 仍包含排队、
    prefill（如未命中）和首个 decode step；两组还都包含网络往返。
 3. 主要比较值用中位数，并同时看 `n`、`min`、`max`。任一组有效样本少于 3 时标记
