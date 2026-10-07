@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { normalizeApiUrl, validateParams, tokenSpeedTestRules, getDefaultTimeout } from '../src/http-client.js';
+import {
+  createHttpClient,
+  normalizeApiUrl,
+  validateParams,
+  tokenSpeedTestRules,
+  getDefaultTimeout
+} from '../src/http-client.js';
 
 describe('http-client', () => {
   describe('normalizeApiUrl', () => {
@@ -81,6 +87,27 @@ describe('http-client', () => {
       expect(getDefaultTimeout()).toBe(90000);
       process.env.DEFAULT_TIMEOUT = '-5';
       expect(getDefaultTimeout()).toBe(90000);
+    });
+  });
+
+  describe('retryConfig', () => {
+    it('does not retry when maxRetries is zero', async () => {
+      const client = createHttpClient({
+        baseURL: 'https://api.example.com/v1/chat/completions',
+        useKeepAlive: false,
+        retryConfig: { maxRetries: 0 }
+      });
+      let attempts = 0;
+      client.defaults.adapter = async (config) => {
+        attempts++;
+        const error = new Error('server error');
+        error.config = config;
+        error.response = { status: 503, headers: {}, config };
+        throw error;
+      };
+
+      await expect(client.post('', {})).rejects.toThrow('server error');
+      expect(attempts).toBe(1);
     });
   });
 });

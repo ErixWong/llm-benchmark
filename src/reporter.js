@@ -35,6 +35,153 @@ function inlineMarkdown(str) {
     .replace(/\s*\n\s*/g, ' ');
 }
 
+function cacheVerdictLabel(verdict) {
+  return {
+    benefit: '观察到缓存收益',
+    'no-benefit': '未观察到缓存收益',
+    inconclusive: '结论不确定'
+  }[verdict] || '结论不确定';
+}
+
+function cacheReasonLabel(reason) {
+  return {
+    'insufficient-samples': '样本不足（有效配对少于 3 或冷热组样本不足）',
+    'server-reports-zero': '服务端报告零缓存命中',
+    'consistent-benefit': '配对差值一致支持收益',
+    'inconsistent-pair-deltas': '服务端报告命中，但配对差值不一致',
+    'no-consistent-benefit': '未观察到一致的配对收益'
+  }[reason] || '判定原因未知';
+}
+
+function formatCacheLatency(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value.toFixed(0)} ms`
+    : 'N/A';
+}
+
+function formatCacheDelta(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A';
+  return `${value >= 0 ? '+' : '-'}${formatCacheLatency(Math.abs(value))}`;
+}
+
+function formatCacheRatio(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value.toFixed(2)}×`
+    : 'N/A';
+}
+
+function formatCachePairDeltas(values) {
+  return Array.isArray(values) && values.length > 0
+    ? values.map(formatCacheDelta).join(', ')
+    : 'N/A';
+}
+
+function getCachePrefixSummary(config) {
+  const validation = config?.prefixValidation;
+  const unitCount = config?.units?.length ?? 0;
+  const unique = validation?.unique?.ok ? '通过' : '失败';
+  return `唯一性 ${unique}；预热前缀匹配 ${validation?.verified ?? 0}/${unitCount}`;
+}
+
+function getCacheDiagnosticWarnings(cache) {
+  const warnings = [];
+  if (cache.responseCacheSuspected > 0) {
+    warnings.push(
+      `⚠️ 疑似响应级缓存 ${cache.responseCacheSuspected} 条：TPS/解码类指标可能无效`
+    );
+  }
+  if (cache.truncatedRequests > 0) {
+    warnings.push(
+      `⚠️ ${cache.truncatedRequests} 条请求输出被 max_tokens 截断（结论中的输出长度不代表模型自然长度）`
+    );
+  }
+  return warnings;
+}
+
+function appendCacheMarkdown(lines, cache, config) {
+  const cold = cache.cold || {};
+  const warm = cache.warm || {};
+  const server = cache.server;
+  const sampleCount = config?.samples ?? '-';
+  const diagnosticWarnings = getCacheDiagnosticWarnings(cache);
+
+  lines.push('### 缓存命中');
+  lines.push('');
+  lines.push('| 指标 | 值 |');
+  lines.push('|------|-----|');
+  lines.push(`| 冷组 TTFT 中位数 | ${formatCacheLatency(cold.median)}（n=${cold.n ?? 0}）|`);
+  lines.push(`| 冷组 TTFT min / max | ${formatCacheLatency(cold.min)} / ${formatCacheLatency(cold.max)} |`);
+  lines.push(`| 热组 TTFT 中位数 | ${formatCacheLatency(warm.median)}（n=${warm.n ?? 0}）|`);
+  lines.push(`| 热组 TTFT min / max | ${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)} |`);
+  lines.push(`| 冷-热 TTFT 差值（中位数之差） | ${formatCacheDelta(cache.ttftDeltaMs)} |`);
+  lines.push(`| 冷/热 TTFT 倍数 | ${formatCacheRatio(cache.ttftRatio)} |`);
+  lines.push(`| 配对差值（热-冷，按单元） | ${formatCachePairDeltas(cache.pairDeltas)} |`);
+  lines.push(`| 一致有利配对 | ${cache.pairsFavorable ?? 0}/${cache.pairsTotal ?? 0} |`);
+  lines.push(`| 判定 | ${cacheVerdictLabel(cache.verdict)} |`);
+  lines.push(`| 判定原因 | ${cacheReasonLabel(cache.reason)} |`);
+  lines.push(`| 服务端 token 命中率 | ${server?.tokenHitRate == null ? '未知' : `${(server.tokenHitRate * 100).toFixed(2)}%`} |`);
+  lines.push(`| 服务端数据覆盖请求数 | ${server?.requestsWithData ?? 0}/${sampleCount} |`);
+  lines.push(`| 前缀自检 | ${getCachePrefixSummary(config)} |`);
+  lines.push('');
+  if (server === null) {
+    lines.push('> 服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。');
+    lines.push('');
+  }
+  if (cache.insufficientSamples) {
+    lines.push('> 样本不足，不做结论。');
+    lines.push('');
+  }
+  for (const warning of diagnosticWarnings) {
+    lines.push(warning);
+  }
+  if (diagnosticWarnings.length > 0) {
+    lines.push('');
+  }
+}
+
+function generateCacheHtml(cache, config) {
+  const cold = cache.cold || {};
+  const warm = cache.warm || {};
+  const server = cache.server;
+  const sampleCount = config?.samples ?? '-';
+  const safe = (value) => escapeHtml(String(value ?? 'N/A'));
+  const hitRate = server?.tokenHitRate == null
+    ? '未知'
+    : `${(server.tokenHitRate * 100).toFixed(2)}%`;
+  const rows = [
+    ['冷组 TTFT 中位数', `${formatCacheLatency(cold.median)}（n=${cold.n ?? 0}）`],
+    ['冷组 TTFT min / max', `${formatCacheLatency(cold.min)} / ${formatCacheLatency(cold.max)}`],
+    ['热组 TTFT 中位数', `${formatCacheLatency(warm.median)}（n=${warm.n ?? 0}）`],
+    ['热组 TTFT min / max', `${formatCacheLatency(warm.min)} / ${formatCacheLatency(warm.max)}`],
+    ['冷-热 TTFT 差值（中位数之差）', formatCacheDelta(cache.ttftDeltaMs)],
+    ['冷/热 TTFT 倍数', formatCacheRatio(cache.ttftRatio)],
+    ['配对差值（热-冷，按单元）', formatCachePairDeltas(cache.pairDeltas)],
+    ['一致有利配对', `${cache.pairsFavorable ?? 0}/${cache.pairsTotal ?? 0}`],
+    ['判定', cacheVerdictLabel(cache.verdict)],
+    ['判定原因', cacheReasonLabel(cache.reason)],
+    ['服务端 token 命中率', hitRate],
+    ['服务端数据覆盖请求数', `${server?.requestsWithData ?? 0}/${sampleCount}`],
+    ['前缀自检', getCachePrefixSummary(config)]
+  ];
+  const notes = [
+    ...(server === null
+      ? ['服务端未上报缓存字段；结论依据为成对 TTFT 行为，不代表服务端确认命中。']
+      : []),
+    ...(cache.insufficientSamples ? ['样本不足，不做结论。'] : []),
+    ...getCacheDiagnosticWarnings(cache)
+  ];
+
+  return `
+      <section class="card cache-probe">
+        <h3>缓存命中</h3>
+        <table>
+          <tr><th>指标</th><th>值</th></tr>
+          ${rows.map(([label, value]) => `<tr><td>${safe(label)}</td><td>${safe(value)}</td></tr>`).join('')}
+        </table>
+        ${notes.map((note) => `<p>${safe(note)}</p>`).join('')}
+      </section>`;
+}
+
 /**
  * 序列化嵌入 <script> 块的数据，防止提前闭合 script 或行分隔符注入
  * （错误信息等字符串来自服务端，不能直接拼进脚本上下文）
@@ -51,10 +198,11 @@ function jsonForScript(value) {
 }
 
 /**
- * 指标口径版本。字段含义发生不兼容变更时 +1
- * v1: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
+ * 指标口径版本：major 表示既有字段含义发生不兼容变更；minor 表示纯新增字段。
+ * v1.0: TTFT = 首个生成 token（含 reasoning）；新增 ttfo / tokenSource；移除 decodeThroughputTps
+ * v1.1: 新增可选的 metrics.cache 缓存探针结果（含配对判定规则；该功能与其判定规则在同一未发布版本内定型）
  */
-const METRICS_VERSION = 1;
+const METRICS_VERSION = 1.1;
 
 /**
  * 是否将模型输出全文写入 JSON 报告（默认不写：体积大且含模型完整输出）
@@ -205,6 +353,10 @@ async function generateMarkdownReport(results, outputDir, baseName) {
         lines.push('> 服务端未返回 usage，绝对 token 数为客户端 tokenizer 估算值。');
       }
       lines.push('');
+    }
+
+    if (results.tokenSpeed.metrics.cache) {
+      appendCacheMarkdown(lines, results.tokenSpeed.metrics.cache, results.tokenSpeed.config);
     }
     
     // 错误统计
@@ -974,7 +1126,7 @@ function generateTokenSpeedHtml(results, chartData) {
           </div>
         </div>
       </div>
-      ` : ''}
+      ` : ''}${r.metrics.cache ? generateCacheHtml(r.metrics.cache, r.config) : ''}
     </div>
   `;
 }

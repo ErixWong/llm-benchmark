@@ -168,7 +168,7 @@ export function createHttpClient(options = {}) {
       const { config, response } = error;
 
       // 如果没有config或已经重试过最大次数，直接返回错误
-      if (!config || config.__retryCount >= finalRetryConfig.maxRetries) {
+      if (!config || finalRetryConfig.maxRetries <= 0 || config.__retryCount >= finalRetryConfig.maxRetries) {
         return Promise.reject(error);
       }
 

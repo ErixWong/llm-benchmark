@@ -39,6 +39,12 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `-t, --timeout <sec>` | `DEFAULT_TIMEOUT`（毫秒） | `90` | 单次请求超时 |
 | `--system-prompt <prompt>` | — | 无 | 自定义 system prompt |
 | `--extra-body <json>` | `EXTRA_BODY` | 空 | 透传服务端特有参数，见下文 |
+| `--cache-probe` | `CACHE_PROBE` | `false` | 启用冷/热缓存探针；每个单元先预热前缀，再发 cold/warm 请求 |
+| `--warmup-mode <mode>` | `WARMUP_MODE` | `auto` | `auto`（探针时等同 `prefix`）/ `prefix` / `model` / `none`（仅非探针） |
+| `--prefix-tokens <number>` | `PREFIX_TOKENS` | `4096` | 每个缓存探针单元的目标前缀 token 数 |
+| `--cache-suffix <text>` | — | 固定总结提示 | 冷/热请求共用的追加后缀 |
+| `--cache-seed <number>` | `CACHE_SEED` | `42` | 确定性轮转探针素材的起点 |
+| `--retry <number>` | `RETRY` | `3` | 最大重试次数；`0` 关闭重试 |
 | `-o, --output <dir>` | `REPORT_OUTPUT_DIR` | `./results` | 报告输出目录 |
 | `-q, --quiet` | — | `false` | 只输出最终摘要 |
 | `--dry-run` | — | — | 只打印并校验配置，不发请求 |
@@ -50,6 +56,7 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 - **URL 自动补全**：`https://x/v1` → `https://x/v1/chat/completions`；`https://x` → `https://x/v1/chat/completions`；已含完整路径则原样使用
 - **重试**：最多 3 次，指数退避 1s → 2s → 4s；仅针对 `408/429/500/502/503/504` 与连接类错误；`429` 尊重 `Retry-After`
 - **预热**：正式计时前发 1 次预热请求，不计入任何指标；预热收到 4xx/5xx 会直接终止
+- **缓存探针**：每个探针单元先串行预热一个固定前缀，再以不同 nonce 成对发送 cold/warm；`--warmup-mode model` 会先用唯一 nonce 预热模型/JIT，再串行预热待测前缀；探针不允许 `none`（非探针下 `none` 表示不预热）
 - **Token 计数**：默认携带 `stream_options.include_usage` 以获取服务端精确计数；端点不支持时按报错提示关闭（见 `docs/metrics.md`）
 
 ## 环境变量
@@ -62,6 +69,8 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `CONCURRENCY_MODE` | `pipeline` \| `batch` |
 | `DEFAULT_TIMEOUT` | 请求超时，**单位毫秒** |
 | `SAMPLE_COUNT` / `SAMPLE_FILE_PATTERNS` | 样本数量 / 自定义样本文件名正则（逗号分隔，覆盖默认规则） |
+| `CACHE_PROBE` / `WARMUP_MODE` | 是否启用缓存探针 / 预热方式 |
+| `PREFIX_TOKENS` / `CACHE_SEED` / `RETRY` | 缓存前缀目标长度 / 素材起点 / 最大重试次数 |
 | `EXTRA_BODY` | 透传请求体参数（JSON 字符串） |
 | `REPORT_OUTPUT_DIR` / `REPORT_TITLE` | 输出目录 / 报告标题（默认取模型名） |
 | `REPORT_INCLUDE_TEXT` | `true` 时把模型输出全文写入 JSON 报告，默认不写 |
@@ -75,6 +84,12 @@ node src/index.js -u https://api.example.com/v1 -k sk-xxx --model gpt-4o-mini \
 | `ttfo` | 到首个**可见答案 token**的时延 |
 | `tps` | 单请求解码速度（不含 TTFT） |
 | `throughputTps` | 系统级吞吐：总输出 token ÷ 墙钟时间 |
+| `cache` | 仅在 `--cache-probe` 时出现：冷/热 TTFT、逐单元配对差值、服务端上报的缓存 token 命中率与判定 |
+
+### 指标口径
+
+缓存 verdict 以成对的 `warm_i - cold_i` TTFT 差值判定，`ttftDeltaMs`（冷热组中位数之差）
+与 `ttftRatio` 仅作参考；原因码见 [`docs/metrics.md`](docs/metrics.md#缓存命中)。
 
 **定义依据、口径版本（`metricsVersion`）、token 计数来源、并发饱和怎么判读** ——
 全部在 [`docs/metrics.md`](docs/metrics.md)。
@@ -121,6 +136,9 @@ node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":
 | 并发扫描 | `for c in 1 4 8 16; do node src/index.js -c $c -r 2 -n 0 -m 512 -o results/sweep/c$c; done` |
 | 最差批次表现 | `--concurrency-mode batch` |
 | 大上下文输入 | `-n 2`（每次随机拼 2 个样本） |
+| 冷/热缓存对比 | `node src/index.js --cache-probe --warmup-mode prefix -c 1 -r 3 --prefix-tokens 4096` |
+| 模型预热后的缓存对比 | `node src/index.js --cache-probe --warmup-mode model -c 1 -r 3`（先预热模型/JIT，再串行 priming 待测前缀） |
+| 干净测量、不重试 | `node src/index.js --cache-probe --retry 0 -c 1 -r 3` |
 
 > 固定输入反复压同一服务端会命中前缀缓存导致吞吐虚高；需要干净数据时换输入或清服务端缓存。
 
@@ -140,6 +158,7 @@ node src/index.js --extra-body '{"top_p":0.9,"chat_template_kwargs":{"thinking":
 | `TPS = 0` / `TTFT = N/A` | 确认端点正常流式返回；推理模型见下一条 |
 | `ttfo` 为空、答案为空 | `-m` 太小，输出全被思考占满：加大 `-m` 或关闭思考模式 |
 | token 数看着不对 | 看摘要「Token来源」：`客户端估算` 表示端点没回 usage，绝对值是近似值 |
+| 我开了 prefix caching 但命中率是 0 | 用服务端 `/metrics`（如 `vllm:prefix_cache_hits_total`、`vllm:prompt_tokens_cached_total`）核对；本工具只能如实报告它观测到的服务端 usage 和冷/热行为，无法从客户端推断服务端命中 |
 | 请求 400 | 端点不接受 `stream_options`，用 `--extra-body '{"stream_options":{"include_usage":false}}'` |
 | `没有找到样本文件` | `-n > 0` 但 `data/` 下无匹配 `.txt`：检查文件名规则或改 `-n 0` |
 | 超时 | 长输出增大 `-t`；`.env` 里 `DEFAULT_TIMEOUT` 单位是毫秒 |

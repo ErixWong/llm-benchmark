@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `--cache-probe --warmup-mode model` 现在先做唯一 nonce 的模型/JIT 预热，再串行预热测量前缀；
+  探针下 `--warmup-mode none` 会报错，非探针的 `none` 仍表示跳过预热
 - **BREAKING（指标口径）**: `ttft` 现在取**首个生成 token**，包含 reasoning token。
   与 NVIDIA AIPerf / Artificial Analysis / vLLM 定义一致；修复推理模型下
   TPS 分子（含 reasoning）与分母（从 content 起算）口径不一致导致的 TPS 高估。
@@ -16,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON 报告默认不再包含 `outputText` / `reasoningText`，可用 `REPORT_INCLUDE_TEXT=true` 恢复
 
 ### Added
+- `--cache-probe` 冷/热缓存探针：串行预热前缀、交错测量 cold/warm，并在 `metrics.cache`
+  与 JSON / Markdown / HTML 报告中提供服务端缓存 usage 和 TTFT 行为摘要；缓存 `verdict`
+  根据按单元配对的 TTFT 差值判定，而非冷热组中位数，并提供配对摘要与 `reason` 原因码。
+  探针报告配置新增素材库来源与整体指纹；既有字段语义与默认行为不变；`raw[]` 新增可选字段
+  `promptTokens`、`maxOutputTokens`、
+  `cachedPromptTokens`、`cacheSource`、`hasUsage`、`retries`，探针请求还记录
+  `cacheIntent` / `cacheUnitIndex`。JSON 报告 `metricsVersion` 从 `1` 变为 `1.1`，
+  仅为向后兼容的新增字段，非 BREAKING。详见 `docs/metrics.md`
+- 新增 `src/cache-source.js`、`src/cache-probe.js`、`src/cache-plan.js` 三个缓存探针模块及单测
+- 新增 `--warmup-mode`、`--prefix-tokens`、`--cache-suffix`、`--cache-seed` 与 `--retry`
+  参数；`--retry 0` 可关闭请求重试
 - `ttfo`（Time to First Output Token）：首个**非 reasoning** token 的延迟，
   保留“用户看到第一个字”的视角；已进控制台摘要、Markdown 与 HTML 报告
 - `reasoningTokens` / `contentTokens` 拆分，以及 `tokenSource` / `reasoningTokenSource`

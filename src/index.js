@@ -14,6 +14,13 @@ import { runLlmBenchmarkTest } from './llm-benchmark.js';
 import { generateReport } from './reporter.js';
 import { countMessagesTokens } from './context-generator.js';
 import { parseExtraBody, sanitizeExtraBody } from './extra-body.js';
+import { buildMaterial, hashMaterialBank } from './cache-source.js';
+import {
+  buildProbeUnits,
+  evaluateProbePreflight,
+  makeRunSalt
+} from './cache-probe.js';
+import { buildRequestPlan, selectDocuments } from './cache-plan.js';
 
 // 加载环境变量
 dotenv.config();
@@ -137,6 +144,12 @@ program
   .option('--extra-body <json>', '附加请求体参数（JSON字符串），例如 \'{"chat_template_kwargs":{"enable_thinking":false}}\'', process.env.EXTRA_BODY || '')
   .option('-o, --output <dir>', '输出目录', process.env.REPORT_OUTPUT_DIR || './results')
   .option('-q, --quiet', '静默模式，仅输出最终结果')
+  .option('--cache-probe', '启用缓存命中探针', process.env.CACHE_PROBE === 'true')
+  .option('--warmup-mode <mode>', '预热模式: auto | prefix | model | none', process.env.WARMUP_MODE || 'auto')
+  .option('--prefix-tokens <number>', '每个单元素材的目标前缀Token数', process.env.PREFIX_TOKENS || '4096')
+  .option('--cache-suffix <text>', '冷/热请求共用的追加后缀', '\n\n请用三点总结以上内容。')
+  .option('--cache-seed <number>', '素材起点轮转种子', process.env.CACHE_SEED || '42')
+  .option('--retry <number>', '最大重试次数；0 表示关闭重试', process.env.RETRY || '3')
   .option('--dry-run', '仅输出测试配置，不实际执行请求')
   .action(async (options) => {
     const url = options.url || process.env.API_BASE_URL;
@@ -165,7 +178,34 @@ program
     const maxOutputTokens = safeParseInt(options.maxOutput, 30000, 'maxOutput');
     const timeout = safeParseInt(options.timeout, 90, 'timeout') * 1000;
     const concurrencyMode = options.concurrencyMode;
-    const samples = concurrency * rounds;
+    const cacheProbeEnabled = options.cacheProbe || false;
+    const warmupMode = options.warmupMode;
+    const prefixTokens = safeParseInt(options.prefixTokens, 4096, 'prefixTokens');
+    const cacheSeed = safeParseInt(options.cacheSeed, 42, 'cacheSeed');
+    const retry = safeParseInt(options.retry, 3, 'retry');
+    const unitCount = concurrency * rounds;
+    const samples = cacheProbeEnabled ? 2 * unitCount : unitCount;
+
+    if (!['auto', 'prefix', 'model', 'none'].includes(warmupMode)) {
+      console.error(chalk.red(`❌ 错误: 无效的 --warmup-mode "${warmupMode}"，可选 auto、prefix、model、none`));
+      process.exit(1);
+    }
+    if (!cacheProbeEnabled && warmupMode === 'prefix') {
+      console.error(chalk.red('❌ 错误: warmup-mode prefix 需要启用 --cache-probe'));
+      process.exit(1);
+    }
+    if (cacheProbeEnabled && warmupMode === 'none') {
+      console.error(chalk.red('❌ 错误: 缓存探针必须预热前缀，请使用默认 prefix 或 model'));
+      process.exit(1);
+    }
+    if (prefixTokens < 1) {
+      console.error(chalk.red('❌ 错误: --prefix-tokens 必须大于 0'));
+      process.exit(1);
+    }
+    if (retry < 0) {
+      console.error(chalk.red('❌ 错误: --retry 必须大于或等于 0'));
+      process.exit(1);
+    }
     
     // 验证并发模式
     if (!['batch', 'pipeline'].includes(concurrencyMode)) {
@@ -176,13 +216,16 @@ program
     
     // 扫描样本文件
     let sampleFiles = [];
-    if (sampleCount > 0) {
+    if (sampleCount > 0 || cacheProbeEnabled) {
       try {
         const dataDir = path.join(process.cwd(), 'data');
         sampleFiles = await scanSampleFiles(dataDir);
         sampleFiles = sampleFiles.filter(f => matchesSamplePattern(path.basename(f)));
+        if (cacheProbeEnabled) {
+          sampleFiles.sort();
+        }
         
-        if (sampleFiles.length === 0) {
+        if ((sampleCount > 0 || cacheProbeEnabled) && sampleFiles.length === 0) {
           console.error(chalk.red('❌ 没有找到样本文件'));
           process.exit(1);
         }
@@ -228,8 +271,69 @@ program
     // 创建输入生成器
     const generateInputText = createInputGenerator(sampleCount, sampleFiles);
     
+    let units = null;
+    let requestPlan = null;
+    let runSalt = null;
+    let probeSelfCheck = null;
+    let cacheProbeOptions = null;
+    if (cacheProbeEnabled) {
+      try {
+        const dataDir = path.join(process.cwd(), 'data');
+        const fileContents = await Promise.all(
+          sampleFiles.map(file => fs.readFile(path.join(dataDir, file), 'utf-8'))
+        );
+        const documentsByName = new Map(sampleFiles.map((name, index) => [
+          name,
+          { name, text: fileContents[index] }
+        ]));
+        const materials = [];
+        for (let i = 0; i < unitCount; i++) {
+          const documents = selectDocuments(sampleFiles, i, cacheSeed % sampleFiles.length)
+            .map(name => documentsByName.get(name));
+          const material = buildMaterial({ documents, targetTokens: prefixTokens });
+          materials.push({
+            id: documents[0].name,
+            text: material.text,
+            tokens: material.tokens
+          });
+        }
+        const bankHash = hashMaterialBank(fileContents.map((text) => ({ text })));
+
+        runSalt = makeRunSalt();
+        units = buildProbeUnits({
+          materials,
+          suffix: options.cacheSuffix,
+          runSalt
+        });
+        probeSelfCheck = evaluateProbePreflight(units);
+        if (!probeSelfCheck.ok) {
+          console.error(chalk.red('❌ 缓存探针前缀自检失败'));
+          for (const error of probeSelfCheck.errors) {
+            console.error(chalk.red(`  ${error}`));
+          }
+          process.exit(1);
+        }
+
+        requestPlan = buildRequestPlan(units);
+        cacheProbeOptions = {
+          units,
+          suffix: options.cacheSuffix,
+          warmupMode: warmupMode === 'auto' ? 'prefix' : warmupMode,
+          order: 'cold-warm',
+          runSalt,
+          bank: { name: 'chunked-samples', hash: bankHash },
+          prefixValidation: probeSelfCheck
+        };
+      } catch (error) {
+        console.error(chalk.red(`❌ 无法构造缓存探针素材: ${error.message}`));
+        process.exit(1);
+      }
+    }
+
     // 预估 token 数
-    const sampleInput = await generateInputText();
+    const sampleInput = cacheProbeEnabled
+      ? requestPlan[0]?.text || ''
+      : await generateInputText();
     const estimatedTokens = countMessagesTokens([{ role: 'user', content: sampleInput }]);
     
     if (!quiet) {
@@ -237,8 +341,18 @@ program
       console.log('测试参数:');
       console.log(`  并发数: ${concurrency}`);
       console.log(`  采样轮数: ${rounds}`);
-      console.log(`  总采样数: ${samples} (${concurrency} × ${rounds})`);
-      if (sampleCount > 0) {
+      if (cacheProbeEnabled) {
+        console.log(`  缓存探针单元数: ${unitCount} (${concurrency} × ${rounds})`);
+        console.log(`  计时请求数: ${samples} (每单元 cold + warm)`);
+      } else {
+        console.log(`  总采样数: ${samples} (${concurrency} × ${rounds})`);
+      }
+      if (cacheProbeEnabled) {
+        console.log(`  探针素材文件数: ${sampleFiles.length}（按 cache-seed 确定性轮转）`);
+        if (sampleCount > 0) {
+          console.log(`  -n ${sampleCount} 已触发样本扫描；探针素材按完整匹配文件集构造`);
+        }
+      } else if (sampleCount > 0) {
         console.log(`  每次随机抽取: ${sampleCount} 个样本`);
       } else {
         console.log(`  使用默认简单Prompt`);
@@ -251,6 +365,24 @@ program
         console.log(`  附加请求体: ${JSON.stringify(extraBody)}`);
       }
       console.log(`  API URL: ${url}`);
+      console.log('');
+    }
+
+    if (cacheProbeEnabled) {
+      console.log(chalk.cyan('缓存探针配置:'));
+      console.log(`  单元数: ${unitCount}`);
+      console.log(`  目标前缀Token数: ${prefixTokens}`);
+      for (const unit of units) {
+        console.log(`  单元 ${unit.unitIndex + 1} [${unit.itemId}]: 实际前缀Token数 ${unit.prefixTokens}`);
+      }
+      console.log(`  runSalt: ${runSalt}`);
+      console.log(`  warmupMode: ${cacheProbeOptions.warmupMode}`);
+      const suffixPreview = options.cacheSuffix.length > 80
+        ? `${options.cacheSuffix.slice(0, 80)}...`
+        : options.cacheSuffix;
+      console.log(`  后缀预览: ${JSON.stringify(suffixPreview)}`);
+      console.log(`  请求顺序: ${cacheProbeOptions.order}`);
+      console.log(`  前缀自检: 唯一性通过；热前缀匹配 ${probeSelfCheck.verified}/${probeSelfCheck.total} 通过`);
       console.log('');
     }
     
@@ -275,7 +407,16 @@ program
         generateInputText,
         timeout,
         extraBody,
-        quiet
+        quiet,
+        warmupMode: cacheProbeEnabled ? cacheProbeOptions.warmupMode : warmupMode,
+        retry,
+        ...(cacheProbeEnabled ? {
+          requestPlan,
+          cacheProbe: cacheProbeOptions,
+          cacheSeed,
+          prefixTokens,
+          runSalt
+        } : {})
       });
       
       // 检查测试是否成功
