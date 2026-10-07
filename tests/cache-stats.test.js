@@ -15,10 +15,12 @@ const cacheRequest = (cacheIntent, ttft, fields = {}) => ({
 const groupedRequests = (coldTtft, warmTtft, fields = {}) => [
   ...coldTtft.map((ttft, index) => cacheRequest('miss', ttft, {
     requestIndex: index * 2,
+    cacheUnitIndex: index,
     ...fields
   })),
   ...warmTtft.map((ttft, index) => cacheRequest('hit', ttft, {
     requestIndex: index * 2 + 1,
+    cacheUnitIndex: index,
     ...fields
   }))
 ];
@@ -211,6 +213,26 @@ describe('cache-stats', () => {
       expect(result.ttftRatio).toBeNull();
     });
 
+    it('keeps server data non-null but follows paired behavior when no request has full usage data', () => {
+      const requests = groupedRequests([50, 60, 70], [50, 60, 70]);
+      requests.push(cacheRequest('miss', null, {
+        cacheSource: 'api',
+        cachedPromptTokens: 10,
+        promptTokens: null
+      }));
+      const result = summarizeCache(requests);
+
+      expect(result.server).toEqual({
+        cachedPromptTokens: 0,
+        promptTokens: 0,
+        tokenHitRate: null,
+        requestsWithData: 0,
+        source: 'api'
+      });
+      expect(result.verdict).toBe('no-benefit');
+      expect(result.reason).toBe('no-consistent-benefit');
+    });
+
     it('returns null server statistics when no request reports API cache usage', () => {
       const result = summarizeCache(groupedRequests([100, 110, 120], [50, 55, 60]));
 
@@ -295,17 +317,47 @@ describe('cache-stats', () => {
       expect(result.verdict).toBe('benefit');
     });
 
-    it('sorts each intent group by requestIndex before pairing', () => {
+    it('pairs by cacheUnitIndex rather than requestIndex ordering', () => {
       const result = summarizeCache([
-        cacheRequest('hit', 60, { requestIndex: 5 }),
-        cacheRequest('miss', 300, { requestIndex: 4 }),
-        cacheRequest('hit', 20, { requestIndex: 1 }),
-        cacheRequest('miss', 100, { requestIndex: 0 }),
-        cacheRequest('miss', 200, { requestIndex: 2 }),
-        cacheRequest('hit', 40, { requestIndex: 3 })
+        cacheRequest('hit', 60, { requestIndex: 5, cacheUnitIndex: 2 }),
+        cacheRequest('miss', 300, { requestIndex: 4, cacheUnitIndex: 2 }),
+        cacheRequest('hit', 20, { requestIndex: 1, cacheUnitIndex: 0 }),
+        cacheRequest('miss', 100, { requestIndex: 0, cacheUnitIndex: 0 }),
+        cacheRequest('miss', 200, { requestIndex: 2, cacheUnitIndex: 1 }),
+        cacheRequest('hit', 40, { requestIndex: 3, cacheUnitIndex: 1 })
       ]);
 
       expect(result.pairDeltas).toEqual([-80, -160, -240]);
+    });
+
+    it('does not cross-pair after a unit cold request fails', () => {
+      const result = summarizeCache([
+        {
+          success: false,
+          requestIndex: 0,
+          cacheIntent: 'miss',
+          cacheUnitIndex: 0,
+          ttft: 1
+        },
+        cacheRequest('hit', 70, { requestIndex: 1, cacheUnitIndex: 0 }),
+        cacheRequest('miss', 120, { requestIndex: 2, cacheUnitIndex: 1 }),
+        cacheRequest('hit', 70, { requestIndex: 3, cacheUnitIndex: 1 }),
+        cacheRequest('miss', 135, { requestIndex: 4, cacheUnitIndex: 2 }),
+        cacheRequest('hit', 75, { requestIndex: 5, cacheUnitIndex: 2 })
+      ]);
+
+      expect(result.pairDeltas).toEqual([-50, -60]);
+      expect(result.pairsTotal).toBe(2);
+    });
+
+    it('does not pair requests without cacheUnitIndex', () => {
+      const result = summarizeCache([
+        cacheRequest('miss', 100),
+        cacheRequest('hit', 50)
+      ]);
+
+      expect(result.pairDeltas).toEqual([]);
+      expect(result.pairsTotal).toBe(0);
     });
 
     it('is inconclusive when fewer than three pairs have valid TTFT despite sufficient group samples', () => {

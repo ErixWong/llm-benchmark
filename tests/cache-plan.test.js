@@ -31,15 +31,15 @@ describe('cache-plan', () => {
   describe('buildRequestPlan', () => {
     it('puts cold before warm and maps intents correctly for each unit', () => {
       const plan = buildRequestPlan([
-        { cold: 'cold-1', warm: 'warm-1' },
-        { cold: 'cold-2', warm: 'warm-2' }
+        { unitIndex: 4, cold: 'cold-1', warm: 'warm-1' },
+        { unitIndex: 9, cold: 'cold-2', warm: 'warm-2' }
       ]);
 
       expect(plan).toEqual([
-        { text: 'cold-1', intent: 'miss' },
-        { text: 'warm-1', intent: 'hit' },
-        { text: 'cold-2', intent: 'miss' },
-        { text: 'warm-2', intent: 'hit' }
+        { text: 'cold-1', intent: 'miss', unitIndex: 4 },
+        { text: 'warm-1', intent: 'hit', unitIndex: 4 },
+        { text: 'cold-2', intent: 'miss', unitIndex: 9 },
+        { text: 'warm-2', intent: 'hit', unitIndex: 9 }
       ]);
       expect(plan).toHaveLength(2 * 2);
     });

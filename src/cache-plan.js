@@ -15,14 +15,14 @@ export function selectDocuments(sortedFiles, unitIndex, seedOffset) {
 
 /**
  * 为每个缓存单元按冷请求、热请求的顺序生成计时请求计划。
- * 按计划顺序第 i 个 miss 与第 i 个 hit 属于同一单元，应作为一对比较。
- * @param {Array<{cold:string,warm:string}>} units - 缓存探测单元
- * @returns {Array<{text:string,intent:'miss'|'hit'}>} 计时请求计划
+ * 每条计划请求都带单元标识，配对不依赖过滤成功请求后的序位。
+ * @param {Array<{cold:string,warm:string,unitIndex:number}>} units - 缓存探测单元
+ * @returns {Array<{text:string,intent:'miss'|'hit',unitIndex:number}>} 计时请求计划
  */
 export function buildRequestPlan(units) {
   return units.flatMap((unit) => [
-    { text: unit.cold, intent: 'miss' },
-    { text: unit.warm, intent: 'hit' }
+    { text: unit.cold, intent: 'miss', unitIndex: unit.unitIndex },
+    { text: unit.warm, intent: 'hit', unitIndex: unit.unitIndex }
   ]);
 }
 

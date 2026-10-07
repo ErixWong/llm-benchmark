@@ -62,41 +62,35 @@ export function summarizeCache(requests = []) {
   const successfulRequests = requests.filter((request) => request?.success !== false);
   const coldTtft = [];
   const warmTtft = [];
-  const coldRequests = [];
-  const warmRequests = [];
+  const requestsByUnit = new Map();
 
-  successfulRequests.forEach((request, originalIndex) => {
+  successfulRequests.forEach((request) => {
     if (request?.cacheIntent === 'miss') {
-      coldRequests.push({ request, originalIndex });
       if (typeof request.ttft === 'number' && Number.isFinite(request.ttft)) {
         coldTtft.push(request.ttft);
       }
+      if (Number.isFinite(request.cacheUnitIndex)) {
+        const pair = requestsByUnit.get(request.cacheUnitIndex) ?? {};
+        pair.miss ??= request;
+        requestsByUnit.set(request.cacheUnitIndex, pair);
+      }
     }
     if (request?.cacheIntent === 'hit') {
-      warmRequests.push({ request, originalIndex });
       if (typeof request.ttft === 'number' && Number.isFinite(request.ttft)) {
         warmTtft.push(request.ttft);
+      }
+      if (Number.isFinite(request.cacheUnitIndex)) {
+        const pair = requestsByUnit.get(request.cacheUnitIndex) ?? {};
+        pair.hit ??= request;
+        requestsByUnit.set(request.cacheUnitIndex, pair);
       }
     }
   });
 
-  const sortByRequestIndex = (entries) => entries.sort((a, b) => {
-    const aIndex = Number.isFinite(a.request.requestIndex)
-      ? a.request.requestIndex
-      : a.originalIndex;
-    const bIndex = Number.isFinite(b.request.requestIndex)
-      ? b.request.requestIndex
-      : b.originalIndex;
-    return aIndex - bIndex;
-  });
-  sortByRequestIndex(coldRequests);
-  sortByRequestIndex(warmRequests);
-
   const pairDeltas = [];
-  const pairCount = Math.min(coldRequests.length, warmRequests.length);
-  for (let index = 0; index < pairCount; index += 1) {
-    const cold = coldRequests[index].request.ttft;
-    const warm = warmRequests[index].request.ttft;
+  for (const [, pair] of [...requestsByUnit.entries()].sort(([a], [b]) => a - b)) {
+    const cold = pair.miss?.ttft;
+    const warm = pair.hit?.ttft;
     if (typeof cold === 'number' && Number.isFinite(cold)
       && typeof warm === 'number' && Number.isFinite(warm)) {
       pairDeltas.push(warm - cold);
